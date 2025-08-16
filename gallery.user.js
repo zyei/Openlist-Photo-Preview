@@ -77,23 +77,17 @@
     function startLoadLoop() {
         const loop = () => {
             if (!galleryState.isActive) return;
-
-            // 检查是否有空闲的加载槽位
+            
             while (galleryState.activeLoads < galleryState.maxConcurrentLoads) {
-                // 寻找一个可以开始加载的任务 (可见 > 其他)
-                let nextTask = Array.from(galleryState.visibleSet)
-                    .map(id => galleryState.cards[id])
-                    .find(task => task && task.state === 'idle');
-                
-                if (!nextTask) {
-                    nextTask = galleryState.cards.find(t => t && t.state === 'idle');
-                }
+                // 简化逻辑：始终从整个队列中寻找下一个待办任务
+                const nextTask = galleryState.cards.find(t => t && t.state === 'idle'); // <--- 关键修正1：我们寻找的是'idle'状态
 
                 if (nextTask) {
-                    // 改变状态，并立即开始处理，不再仅仅是推入队列
-                    transitionState(nextTask, 'FETCH');
+                    // 关键修正2：由fetch函数自身来管理状态转换
+                    galleryState.activeLoads++;
+                    fetchSignedUrlAndProcess(nextTask); 
                 } else {
-                    break; // 没有更多空闲任务了
+                    break;
                 }
             }
             
@@ -102,18 +96,12 @@
         galleryState.loadLoopId = requestIdleCallback(loop);
     }
     async function fetchSignedUrlAndProcess(task) {
-        // 在函数开始时就增加 activeLoads，在结束时减少
-        galleryState.activeLoads++;
+        // 关键修正3：在这里转换状态
+        transitionState(task, 'FETCH'); 
         try {
-            const isVisible = galleryState.visibleSet.has(task.id);
+            const isVisible = galleryState.visibleSet.has(galleryState.cards.indexOf(task));
             const token = localStorage.getItem('token');
-            const response = await fetch(API_ENDPOINT, { 
-                method: 'POST', 
-                headers: { 'Content-Type': 'application/json', 'Authorization': token }, 
-                body: JSON.stringify({ path: task.path, password: "" }), 
-                priority: isVisible ? 'high' : 'low' 
-            });
-
+            const response = await fetch(API_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': token }, body: JSON.stringify({ path: task.path, password: "" }), priority: isVisible ? 'high' : 'low' });
             if (!response.ok) throw new Error(`API failed: ${response.status}`);
             const data = await response.json();
             const signedUrl = data?.data?.url;
@@ -121,13 +109,11 @@
             
             task.signedUrl = signedUrl;
             transitionState(task, 'FETCH_SUCCESS');
-            
+            galleryState.worker.postMessage({ id: galleryState.cards.indexOf(task), signedUrl });
         } catch (error) {
             console.error(`Error for path ${task.path}:`, error);
             transitionState(task, 'FETCH_ERROR');
         }
-        // 不论成功或失败，都在这里减少 activeLoads，确保槽位一定会被释放
-        galleryState.activeLoads--;
     }
 
     // --- CORE FIX in handleWorkerMessage ---
