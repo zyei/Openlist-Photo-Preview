@@ -1,27 +1,26 @@
 // ==UserScript==
-// @name         Alist Immersive Gallery v9.3 Finale
+// @name         Alist Immersive Gallery v9.4 Bedrock
 // @namespace    http://tampermonkey.net/
-// @version      9.3
-// @description  The definitive Alist image gallery with a state-machine architecture, FLIP animations, predictive prefetching, and a fully off-thread rendering pipeline.
+// @version      9.4
+// @description  The definitive Alist image gallery with a rock-solid SPA architecture, perfect aspect-ratio FLIP animations, and a fully off-thread rendering pipeline.
 // @author       Your Name & AI
-// @include      /^https?://127\.0\.0\.1:5244/.*$/
-// @include      /^https?://192\.168\.\d{1,3}\.\d{1,3}:5244/.*$/
+// @match        *://127.0.0.1:5244/*
+// @match        *://192.168.1.1:5244/*
 // @grant        GM_addStyle
 // @license      MIT
 // ==/UserScript==
 
 (function() {
     'use strict';
-    console.log('[Alist Gallery] Script v9.3 (Finale) is running!');
+    console.log('[Alist Gallery] Script v9.4 (Bedrock) is running!');
 
-    // --- Configuration ---
     const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif', '.svg', '.jxl']);
     const TRIGGER_IMAGE_COUNT = 3;
     const GALLERY_BUTTON_ID = 'immersive-gallery-trigger-btn';
     const GALLERY_CONTAINER_ID = 'immersive-gallery-container';
     const API_ENDPOINT = '/api/fs/link';
+    const MAX_CONCURRENT_LOADS = 4;
     
-    // --- State Management ---
     let imageList = [], intersectionObserver = null, galleryState = {};
     const initialGalleryState = () => ({
         isActive: false, lastScrollY: 0, cards: [], visibleSet: new Set(),
@@ -29,9 +28,8 @@
         maxConcurrentLoads: getAdaptiveConcurrency()
     });
 
-    // --- Styles ---
     GM_addStyle(`
-        :root{--ease-out-quart:cubic-bezier(0.165,0.84,0.44,1);--ease-in-out-cubic:cubic-bezier(0.645,0.045,0.355,1)}
+        :root{--ease-out-quart:cubic-bezier(0.165, 0.84, 0.44, 1);--ease-in-out-cubic:cubic-bezier(0.645, 0.045, 0.355, 1)}
         body.gallery-is-active{overflow:hidden}
         body.gallery-is-active>#root{position:fixed;top:0;left:0;width:100%;height:100%;overflow:hidden;pointer-events:none;filter:blur(5px);transition:filter .5s var(--ease-in-out-cubic)}
         #${GALLERY_CONTAINER_ID}{position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;overflow-y:auto;opacity:0;transition:opacity .5s ease-in-out;--gradient-color-1:#e0c3fc;--gradient-color-2:#8ec5fc;--gradient-color-3:#f0f2f5;background:linear-gradient(135deg,var(--gradient-color-1),var(--gradient-color-2),var(--gradient-color-3));background-size:400% 400%;animation:gradientAnimation 25s ease infinite}
@@ -43,7 +41,7 @@
         #${GALLERY_BUTTON_ID}:hover{transform:scale(1.1);box-shadow:0 8px 25px rgba(0,0,0,.2)}
         @keyframes fadeIn{to{opacity:1;transform:scale(1)}}
         #${GALLERY_BUTTON_ID} .btn-text{font-size:1.8em;line-height:1}
-        .gallery-back-btn,.gallery-toolbar{background:rgba(255,255,255,.6);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border:1px solid rgba(255,255,255,.2);color:#333;transition:all .3s var(--ease-in-out-cubic)}
+        .gallery-back-btn,.gallery-toolbar{background:rgba(255,255,255,.6);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border:1px solid rgba(255,255,255,.2);color:#333;transition:all .3s cubic-bezier(.645,.045,.355,1)}
         .gallery-back-btn{position:fixed;top:20px;left:20px;width:44px;height:44px;border-radius:50%;z-index:10001;display:flex;justify-content:center;align-items:center;cursor:pointer;font-size:1.2em;font-weight:700;font-family:monospace}
         .gallery-back-btn:hover{background:rgba(255,255,255,.8);transform:scale(1.1)}
         .gallery-toolbar{position:fixed;top:20px;right:20px;z-index:10001;display:flex;gap:10px;padding:8px;border-radius:22px;opacity:0;visibility:hidden;transform:translateY(-20px)}
@@ -51,16 +49,16 @@
         .toolbar-btn{width:40px;height:40px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s,color .2s;font-size:.8em;font-weight:700}
         .toolbar-btn:hover{background:rgba(0,0,0,.05)}
         .toolbar-btn.active{background:#8ec5fc;color:#fff!important}
-        .gallery-image-list{display:flex;flex-direction:column;align-items:center;gap:40px;padding:10vh 0;transition:gap .4s var(--ease-in-out-cubic)}
-        .gallery-card{width:90%;max-width:1000px;border-radius:16px;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);overflow:hidden;position:relative;background-color:rgba(255,255,255,.2);opacity:0;transform:translateY(60px) scale(.95);transition:transform .6s var(--ease-out-quart),opacity .6s var(--ease-out-quart),aspect-ratio .6s var(--ease-in-out-cubic),border-radius .4s ease,width .6s var(--ease-in-out-cubic),max-width .6s var(--ease-in-out-cubic);aspect-ratio:3/4;min-height:300px;will-change:transform,opacity,aspect-ratio,width,max-width;overflow-anchor:none}
+        .gallery-image-list{display:flex;flex-direction:column;align-items:center;gap:40px;padding:10vh 0;transition:gap .4s cubic-bezier(.645,.045,.355,1)}
+        .gallery-card{width:90%;max-width:1000px;border-radius:16px;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);overflow:hidden;position:relative;background-color:rgba(255,255,255,.2);opacity:0;transform:translateY(60px) scale(.95);transition:transform .6s var(--ease-out-quart),opacity .6s var(--ease-out-quart),aspect-ratio .6s cubic-bezier(.645,.045,.355,1),border-radius .4s ease,width .6s cubic-bezier(.645,.045,.355,1),max-width .6s cubic-bezier(.645,.045,.355,1);aspect-ratio:3/4;min-height:300px;will-change:transform,opacity,aspect-ratio,width,max-width;overflow-anchor:none}
         .gallery-card.is-visible{opacity:1;transform:translateY(0) scale(1)}
         .card-placeholder{position:absolute;top:0;left:0;width:100%;height:100%;backdrop-filter:blur(40px) saturate(150%);-webkit-backdrop-filter:blur(40px) saturate(150%);transition:opacity .8s ease-out}
         .thumbnail-bg{position:absolute;top:0;left:0;width:100%;height:100%;background-size:cover;background-position:center;filter:blur(20px);transform:scale(1.2);will-change:clip-path}
         .gallery-image-wrapper{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;will-change:opacity}
-        .gallery-image{display:block;width:100%;height:100%;object-fit:contain}
+        .gallery-image{display:block;width:100%;height:100%;object-fit:contain !important}
+        .gallery-image-list.mode-webtoon .gallery-image{object-fit:cover !important}
         .gallery-image-list.mode-webtoon{gap:0}
         .gallery-image-list.mode-webtoon .gallery-card{width:100%;max-width:100%;border-radius:0;box-shadow:none;background:transparent}
-        .gallery-image-list.mode-webtoon .gallery-image{object-fit:cover}
         .gallery-image-list.mode-webtoon .card-filename,.gallery-image-list.mode-webtoon .thumbnail-bg{display:none}
         .gallery-image-list.mode-full-width .gallery-card{width:95vw;max-width:95vw}
         .card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px #000}
@@ -128,7 +126,7 @@
         startLoadLoop();
         prefetchNextImages();
     }
-
+    
     function closeGallery() {
         if (!galleryState.isActive) return;
         const galleryContainer = document.getElementById(GALLERY_CONTAINER_ID);
@@ -150,11 +148,9 @@
     
     function setupEventListeners() {
         const backBtn = document.querySelector(".gallery-back-btn");
-        if(backBtn) backBtn.addEventListener("click", closeGallery);
-        
+        if (backBtn) backBtn.addEventListener("click", closeGallery);
         document.addEventListener("keydown", handleKeyPress);
-        const toolbar = document.querySelector(".gallery-toolbar");
-        const imageListContainer = document.querySelector(".gallery-image-list");
+        const toolbar = document.querySelector(".gallery-toolbar"), imageListContainer = document.querySelector(".gallery-image-list");
         if (toolbar && imageListContainer) {
             toolbar.addEventListener("click", e => {
                 const button = e.target.closest(".toolbar-btn");
@@ -169,22 +165,12 @@
     }
     
     function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
-
+    
     function startLoadLoop() {
         const loop = () => {
             if (!galleryState.isActive) return;
             while (galleryState.activeLoads < galleryState.maxConcurrentLoads) {
-                let nextTask = null;
-                for (const id of galleryState.visibleSet) {
-                    const task = galleryState.cards[id];
-                    if (task && task.state === 'idle') {
-                        nextTask = task;
-                        break;
-                    }
-                }
-                if (!nextTask) {
-                    nextTask = galleryState.cards.find(t => t && t.state === 'idle');
-                }
+                const nextTask = galleryState.cards.find(t => t && t.state === 'idle');
                 if (nextTask) {
                     transitionState(nextTask, 'FETCH');
                 } else break;
@@ -196,6 +182,7 @@
     
     async function fetchSignedUrlAndProcess(task) {
         galleryState.activeLoads++;
+        transitionState(task, 'FETCH_SENT');
         try {
             const isVisible = galleryState.visibleSet.has(task.id);
             const token = localStorage.getItem('token');
@@ -212,14 +199,11 @@
             transitionState(task, 'FETCH_ERROR');
         }
     }
-
+    
     function handleWorkerMessage({ data: { id, thumbnailBlob, width, height, error, imageBitmap } }) {
         const task = galleryState.cards[id];
         if (!task) return;
-        if (error) {
-            transitionState(task, 'WORKER_ERROR');
-            return;
-        }
+        if (error) { transitionState(task, 'WORKER_ERROR'); return; }
         task.imageBitmap = imageBitmap;
         task.thumbnailBlob = thumbnailBlob;
         task.width = width;
@@ -228,13 +212,17 @@
     }
 
     function setupLazyLoading() {
+        if (intersectionObserver) intersectionObserver.disconnect();
         intersectionObserver = new IntersectionObserver(entries => {
             entries.forEach(entry => {
                 const id = parseInt(entry.target.id.replace('gallery-card-', ''));
                 if (galleryState.cards[id]) {
                     if (entry.isIntersecting) {
                         galleryState.visibleSet.add(id);
-                        galleryState.cards[id].el.classList.add('is-visible');
+                        if(galleryState.cards[id].state === 'idle'){
+                            galleryState.cards[id].el.classList.add('is-visible');
+                            requestIdleCallback(startLoadLoop);
+                        }
                         prefetchNextImages(id);
                     } else {
                         galleryState.visibleSet.delete(id);
@@ -270,7 +258,7 @@
         }
     }
     
-    function transitionState(task, action, payload = {}) {
+    function transitionState(task, action) {
         const card = task.el;
         switch (task.state) {
             case 'idle':
@@ -321,7 +309,7 @@
             card.style.maxWidth = '95vw';
         }
         card.style.aspectRatio = aspectRatio;
-
+        
         const last = card.getBoundingClientRect();
         const deltaX = first.left - last.left;
         const deltaY = first.top - last.top;
@@ -335,7 +323,7 @@
         thumbBg.className = 'thumbnail-bg';
         thumbBg.style.backgroundImage = `url(${thumbnailUrl})`;
         card.prepend(thumbBg);
-
+        
         thumbBg.animate([{ clipPath: 'inset(50% 50% 50% 50% round 16px)' }, { clipPath: 'inset(0% 0% 0% 0% round 16px)' }], { duration: 800, delay: 100, easing: EASE.quart, fill: 'forwards' }).finished
             .then(() => {
                 const finalCanvas = document.createElement('canvas');
@@ -362,24 +350,36 @@
                 card.style.overflowAnchor = 'auto';
             });
     }
-    
-    // --- Initializer ---
-    const observer = new MutationObserver(() => {
-        setTimeout(() => {
-            const listContainer = document.querySelector('.list.viselect-container') || document.querySelector('.obj-box .hope-grid');
-            if (listContainer) scanForImages();
-            else { const btn = document.getElementById(GALLERY_BUTTON_ID); if (btn) btn.remove(); }
-        }, 500);
-    });
-    
-    const rootObserver = new MutationObserver((_, obs) => {
+
+    // --- Initializer and SPA Navigation Handler ---
+    let currentPath = location.pathname;
+    function handleNavigation() {
+        // A simple but effective SPA navigation check
+        if (location.pathname !== currentPath) {
+            currentPath = location.pathname;
+            console.log('[Alist Gallery] Navigation detected, re-scanning...');
+            
+            // Cleanup previous instances if gallery is not active
+            if(!galleryState.isActive){
+                 const btn = document.getElementById(GALLERY_BUTTON_ID);
+                 if(btn) btn.remove();
+                 scanForImages();
+            }
+        }
+    }
+
+    const rootObserver = new MutationObserver((mutations) => {
+        // This observer handles both initial load and subsequent navigations
+        handleNavigation();
         const mainContentArea = document.querySelector(".obj-box");
-        if (mainContentArea) {
-            observer.observe(mainContentArea, { childList: true, subtree: true });
-            scanForImages();
-            obs.disconnect();
+        if(mainContentArea && !mainContentArea.dataset.galleryObserver){
+             mainContentArea.dataset.galleryObserver = 'true';
+             const contentObserver = new MutationObserver(scanForImages);
+             contentObserver.observe(mainContentArea, { childList: true, subtree: true });
+             scanForImages();
         }
     });
+    
     rootObserver.observe(document.body, { childList: true, subtree: true });
 
 })();
