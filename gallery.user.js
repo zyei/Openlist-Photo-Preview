@@ -102,21 +102,32 @@
         galleryState.loadLoopId = requestIdleCallback(loop);
     }
     async function fetchSignedUrlAndProcess(task) {
+        // 在函数开始时就增加 activeLoads，在结束时减少
+        galleryState.activeLoads++;
         try {
-            const isVisible = galleryState.visibleSet.has(galleryState.cards.indexOf(task));
+            const isVisible = galleryState.visibleSet.has(task.id);
             const token = localStorage.getItem('token');
-            const response = await fetch(API_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': token }, body: JSON.stringify({ path: task.path, password: "" }), priority: isVisible ? 'high' : 'low' });
+            const response = await fetch(API_ENDPOINT, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json', 'Authorization': token }, 
+                body: JSON.stringify({ path: task.path, password: "" }), 
+                priority: isVisible ? 'high' : 'low' 
+            });
+
             if (!response.ok) throw new Error(`API failed: ${response.status}`);
             const data = await response.json();
             const signedUrl = data?.data?.url;
             if (!signedUrl) throw new Error("Signed URL not found.");
+            
             task.signedUrl = signedUrl;
             transitionState(task, 'FETCH_SUCCESS');
-            galleryState.worker.postMessage({ id: galleryState.cards.indexOf(task), signedUrl });
+            
         } catch (error) {
             console.error(`Error for path ${task.path}:`, error);
             transitionState(task, 'FETCH_ERROR');
         }
+        // 不论成功或失败，都在这里减少 activeLoads，确保槽位一定会被释放
+        galleryState.activeLoads--;
     }
 
     // --- CORE FIX in handleWorkerMessage ---
