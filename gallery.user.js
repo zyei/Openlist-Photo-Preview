@@ -77,15 +77,21 @@
     function startLoadLoop() {
         const loop = () => {
             if (!galleryState.isActive) return;
+            
+            // 简化逻辑：始终从整个队列中寻找下一个待办任务
             while (galleryState.activeLoads < galleryState.maxConcurrentLoads) {
-                let nextTask = Array.from(galleryState.visibleSet).map(id => galleryState.cards[id]).find(task => task && task.state === 'idle');
-                if (!nextTask) nextTask = galleryState.cards.find(t => t.state === 'idle');
+                const nextTask = galleryState.cards.find(t => t && t.state === 'pending');
+
                 if (nextTask) {
                     transitionState(nextTask, 'FETCH');
                     galleryState.activeLoads++;
                     fetchSignedUrlAndProcess(nextTask);
-                } else break;
+                } else {
+                    break; // 队列中没有待办任务了
+                }
             }
+            
+            // 保持 requestIdleCallback 以实现空闲时处理
             galleryState.loadLoopId = requestIdleCallback(loop);
         };
         galleryState.loadLoopId = requestIdleCallback(loop);
