@@ -3,9 +3,9 @@
 // @namespace    http://tampermonkey.net/
 // @version      9.4
 // @description  The definitive Alist image gallery with a rock-solid SPA architecture, perfect aspect-ratio FLIP animations, and a fully off-thread rendering pipeline.
-// @author       Your Name & AI
-// @match        *://127.0.0.1:5244/*
-// @match        *://192.168.1.1:5244/*
+// @author       zhang & gemini
+// @include      /^https?://127\.0\.0\.1:5244/.*$/
+// @include      /^https?://192\.168\.\d{1,3}\.\d{1,3}:5244/.*$/
 // @grant        GM_addStyle
 // @license      MIT
 // ==/UserScript==
