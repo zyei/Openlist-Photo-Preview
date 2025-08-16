@@ -157,35 +157,17 @@
             }
         }
     }
-    function transitionState(task, action, payload = {}) {
+function transitionState(task, action) {
         const card = task.el;
         switch (task.state) {
-            case 'idle':
-                if (action === 'FETCH') {
-                    task.state = 'fetching';
-                    // 不在这里增加 activeLoads，移到 fetchSignedUrlAndProcess 中
-                    fetchSignedUrlAndProcess(task);
-                }
-                break;
+            case 'idle': if (action === 'FETCH') task.state = 'fetching'; break;
             case 'fetching':
-                if (action === 'FETCH_SUCCESS') {
-                    task.state = 'pending_worker';
-                    // fetch 成功后，立即将任务交给 worker
-                    galleryState.worker.postMessage({ id: task.id, signedUrl: task.signedUrl });
-                } else if (action === 'FETCH_ERROR') { 
-                    task.state = 'error'; 
-                    card.querySelector('.card-placeholder').textContent = 'Error';
-                }
+                if (action === 'FETCH_SUCCESS') task.state = 'pending_worker';
+                else if (action === 'FETCH_ERROR') { task.state = 'error'; card.querySelector('.card-placeholder').textContent = 'Error'; galleryState.activeLoads--; }
                 break;
             case 'pending_worker':
-                 if (action === 'WORKER_SUCCESS') {
-                    task.state = 'animating';
-                    // worker 成功后，才开始动画
-                    animateCard(task);
-                } else if (action === 'WORKER_ERROR') { 
-                    task.state = 'error'; 
-                    card.querySelector('.card-placeholder').textContent = 'Error';
-                }
+                if (action === 'WORKER_SUCCESS') { task.state = 'animating'; animateCard(task); }
+                else if (action === 'WORKER_ERROR') { task.state = 'error'; card.querySelector('.card-placeholder').textContent = 'Error'; galleryState.activeLoads--; }
                 break;
         }
     }
