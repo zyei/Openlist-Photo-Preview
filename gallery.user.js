@@ -1,372 +1,321 @@
 // ==UserScript==
-// @name         Alist Immersive Gallery v9.5 Bedrock
+// @name         Alist 沉浸式图廊 (Immersive Gallery) v9.4 Emergence
 // @namespace    http://tampermonkey.net/
-// @version      9.5
-// @description  The definitive Alist image gallery with a rock-solid SPA architecture, perfect aspect-ratio FLIP animations, and a fully off-thread rendering pipeline.
+// @version      9.4
+// @description  v9.4 "Emergence" 引入全新的“涌现式”加载动画，并使用 Image.decode() API 优化现代图片格式的解码性能，实现极致流畅的视觉体验。
 // @author       Your Name & AI
-// @match        *://127.0.0.1:5244/*
-// @match        *://192.168.1.1:5244/*
+// @include      /^https?://127\.0\.0\.1:5244/.*$/
+// @include      /^https?://192\.168\.\d{1,3}\.\d{1,3}:5244/.*$/
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjOGFjNmZmIiBkPSJNMjIgMTZWNGEyIDIgMCAwIDAtMi0ySDhNMyA2djEyYTIgMiAwIDAgMCAyIDJoMTJhMiAyIDAgMCAwIDItMlY4bC00LTRINWExIDEgMCAwIDEgMC0yaDEwVjRoNFYybC00IDRIM2EyIDIgMCAwIDAtMiAydjE0YTIgMiAwIDAgMCAyIDJoMTRhMiAyIDAgMCAwIDItMlY2aC0ydjEwaC04bC0yLTItMiAySDV2LTRoN2wtMy0zSDVhMSAxIDAgMCAxIDAtMmgzLjE3MmwzIDNIMTlWNkwzIDZtMi0yaDEwbDMgM0g1YTEgMSAwIDAgMSAwLTJtNSA5YTEuMSAxLjUgMCAxIDEgMC0zYTEuNSAxLjUgMCAwIDEgMCAzWiIvPjwvc3ZnPg==
 // @grant        GM_addStyle
 // @license      MIT
 // ==/UserScript==
 
 (function() {
     'use strict';
-    console.log('[Alist Gallery] Script v9.5 (Bedrock) is running!');
 
-    const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.avif', '.svg', '.jxl']);
-    const TRIGGER_IMAGE_COUNT = 3;
+    console.log('[Alist Gallery] Script v9.4 (Emergence) is running!');
+
+    // --- 配置项 (不变) ---
+    const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', 'avif', '.svg', '.JPG', '.jxl', '.JXL'];
+    const TRIGGER_IMAGE_COUNT = 5;
     const GALLERY_BUTTON_ID = 'immersive-gallery-trigger-btn';
     const GALLERY_CONTAINER_ID = 'immersive-gallery-container';
-    const API_ENDPOINT = '/api/fs/link';
-    const MAX_CONCURRENT_LOADS = 4;
-    
-    let imageList = [], intersectionObserver = null, galleryState = {};
-    const initialGalleryState = () => ({
-        isActive: false, lastScrollY: 0, cards: [], visibleSet: new Set(),
-        activeLoads: 0, worker: null, prefetchController: new AbortController(),
-        maxConcurrentLoads: getAdaptiveConcurrency()
-    });
+    const API_LINK_ENDPOINT = '/api/fs/link';
+    const API_GET_ENDPOINT = '/api/fs/get';
+    const LARGE_FILE_THRESHOLD_MB = 5;
+    const MAX_CONCURRENT_DOWNLOADS = 3;
+    const LOAD_RETRY_COUNT = 2;
 
-    GM_addStyle(`:root{--ease-out-quart:cubic-bezier(0.165, 0.84, 0.44, 1);--ease-in-out-cubic:cubic-bezier(0.645, 0.045, 0.355, 1)}body.gallery-is-active{overflow:hidden}body.gallery-is-active>#root{position:fixed;top:0;left:0;width:100%;height:100%;overflow:hidden;pointer-events:none;filter:blur(5px);transition:filter .5s var(--ease-in-out-cubic)}#${GALLERY_CONTAINER_ID}{position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;overflow-y:auto;opacity:0;transition:opacity .5s ease-in-out;--gradient-color-1:#e0c3fc;--gradient-color-2:#8ec5fc;--gradient-color-3:#f0f2f5;background:linear-gradient(135deg,var(--gradient-color-1),var(--gradient-color-2),var(--gradient-color-3));background-size:400% 400%;animation:gradientAnimation 25s ease infinite}#${GALLERY_CONTAINER_ID}::after{content:'';position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAAAUVBMVEWFhYWDg4N3d3dtbW17e3t1dXWBgYGHh4d5eXlzc3OLi4ubm5uVlZWPj4+NjY19fX2JiYl/f39sbGxvb29xcXGTk5NpaWmRkZGtra2YmJikpKSnp6e6urqioqK7u7vBwcGRs20AAAAuSURBVDjL7dBEAQAgEMCwA/9/mB8jUr83AST9S7y9cwAAAAAAAAAAAAAAAAAA4G4A0x8AASs0GAAAAABJRU5ErkJggg==);background-repeat:repeat;opacity:.2;animation:grain 8s steps(10) infinite}@keyframes gradientAnimation{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}@keyframes grain{0%,100%{transform:translate(0,0)}10%{transform:translate(-5%,-10%)}20%{transform:translate(-15%,5%)}30%{transform:translate(7%,-25%)}40%{transform:translate(-5%,25%)}50%{transform:translate(-15%,10%)}60%{transform:translate(15%,0%)}70%{transform:translate(0%,15%)}80%{transform:translate(3%,35%)}90%{transform:translate(-10%,10%)}}#${GALLERY_CONTAINER_ID}.gallery-active{opacity:1}#${GALLERY_BUTTON_ID}{position:fixed;bottom:25px;right:25px;width:55px;height:55px;background:#fff;color:#333;border-radius:50%;border:none;cursor:pointer;z-index:9998;display:flex;justify-content:center;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.15);transition:transform .2s var(--ease-out-quart),box-shadow .2s;opacity:0;transform:scale(0);animation:fadeIn .5s .2s forwards}#${GALLERY_BUTTON_ID}:hover{transform:scale(1.1);box-shadow:0 8px 25px rgba(0,0,0,.2)}@keyframes fadeIn{to{opacity:1;transform:scale(1)}}#${GALLERY_BUTTON_ID} .btn-text{font-size:1.8em;line-height:1}.gallery-back-btn,.gallery-toolbar{background:rgba(255,255,255,.6);backdrop-filter:blur(16px) saturate(180%);-webkit-backdrop-filter:blur(16px) saturate(180%);border:1px solid rgba(255,255,255,.2);color:#333;transition:all .3s cubic-bezier(.645,.045,.355,1)}.gallery-back-btn{position:fixed;top:20px;left:20px;width:44px;height:44px;border-radius:50%;z-index:10001;display:flex;justify-content:center;align-items:center;cursor:pointer;font-size:1.2em;font-weight:700;font-family:monospace}.gallery-back-btn:hover{background:rgba(255,255,255,.8);transform:scale(1.1)}.gallery-toolbar{position:fixed;top:20px;right:20px;z-index:10001;display:flex;gap:10px;padding:8px;border-radius:22px;opacity:0;visibility:hidden;transform:translateY(-20px)}#${GALLERY_CONTAINER_ID}:hover .gallery-toolbar{opacity:1;visibility:visible;transform:translateY(0)}.toolbar-btn{width:40px;height:40px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s,color .2s;font-size:.8em;font-weight:700}.toolbar-btn:hover{background:rgba(0,0,0,.05)}.toolbar-btn.active{background:#8ec5fc;color:#fff!important}.gallery-image-list{display:flex;flex-direction:column;align-items:center;gap:40px;padding:10vh 0;transition:gap .4s cubic-bezier(.645,.045,.355,1)}.gallery-card{width:90%;max-width:1000px;border-radius:16px;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);overflow:hidden;position:relative;background-color:rgba(255,255,255,.2);opacity:0;transform:translateY(60px) scale(.95);transition:transform .6s var(--ease-out-quart),opacity .6s var(--ease-out-quart),aspect-ratio .6s cubic-bezier(.645,.045,.355,1),border-radius .4s ease,width .6s cubic-bezier(.645,.045,.355,1),max-width .6s cubic-bezier(.645,.045,.355,1);aspect-ratio:3/4;min-height:300px;will-change:transform,opacity,aspect-ratio,width,max-width;overflow-anchor:none}.gallery-card.is-visible{opacity:1;transform:translateY(0) scale(1)}.card-placeholder{position:absolute;top:0;left:0;width:100%;height:100%;backdrop-filter:blur(40px) saturate(150%);-webkit-backdrop-filter:blur(40px) saturate(150%);transition:opacity .8s ease-out}.thumbnail-bg{position:absolute;top:0;left:0;width:100%;height:100%;background-size:cover;background-position:center;filter:blur(20px);transform:scale(1.2);will-change:clip-path}.gallery-image-wrapper{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;will-change:opacity}.gallery-image{display:block;width:100%;height:100%;object-fit:contain !important}.gallery-image-list.mode-webtoon .gallery-image{object-fit:cover !important}.gallery-image-list.mode-webtoon{gap:0}.gallery-image-list.mode-webtoon .gallery-card{width:100%;max-width:100%;border-radius:0;box-shadow:none;background:transparent}.gallery-image-list.mode-webtoon .card-filename,.gallery-image-list.mode-webtoon .thumbnail-bg{display:none}.gallery-image-list.mode-full-width .gallery-card{width:95vw;max-width:95vw}.card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px #000}.gallery-card:hover .card-filename{opacity:1}`);
+    let imageList = [];
+    let intersectionObserver = null;
+    let galleryState = { isActive: false, lastScrollY: 0, controller: null };
 
-    const workerCode = `self.onmessage=async e=>{let{id:a,signedUrl:t}=e.data;try{let e=await fetch(t,{priority:"low"}),r=await e.blob(),i=await createImageBitmap(r),n=new OffscreenCanvas(100,100/(i.width/i.height)),s=n.getContext("2d");s.drawImage(i,0,0,n.width,n.height);let o=await n.convertToBlob({type:"image/jpeg",quality:.2});self.postMessage({id:a,thumbnailBlob:o,width:i.width,height:i.height,imageBitmap:i},[i])}catch(o){self.postMessage({id:a,error:o.message})}}`;
-    const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
-    const createWorker = () => new Worker(URL.createObjectURL(workerBlob));
-    const getAdaptiveConcurrency = () => navigator.connection?.effectiveType === '4g' ? 6 : navigator.connection?.effectiveType === '3g' ? 4 : 2;
-
-    function scanForImages() {
-        const links = Array.from(document.querySelectorAll("a.list-item, a.grid-item"));
-        const newImageList = links.map(link => {
-            const nameElement = link.querySelector("p.name, p[class*='hope-text']");
-            if (!nameElement) return null;
-            const text = nameElement.textContent.trim();
-            const extension = ('.' + text.split('.').pop()).toLowerCase();
-            if (IMAGE_EXTENSIONS.has(extension)) {
-                const rawPath = decodeURIComponent(new URL(link.href).pathname);
-                return { name: text, path: rawPath };
-            }
-            return null;
-        }).filter(Boolean);
-        
-        if(JSON.stringify(imageList) !== JSON.stringify(newImageList)) {
-             imageList = newImageList;
-             const btn = document.getElementById(GALLERY_BUTTON_ID);
-             if (imageList.length >= TRIGGER_IMAGE_COUNT) {
-                 if (!btn) createGalleryTriggerButton();
-             } else if (btn) {
-                 btn.remove();
-             }
+    // --- [v9.4] 样式更新: Emergence 动画 ---
+    GM_addStyle(`
+        /* ... 背景和基础样式不变 (来自 v9.2.1) ... */
+        body.gallery-is-active { overflow: hidden; }
+        body.gallery-is-active > #root { position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+        #${GALLERY_CONTAINER_ID} {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999;
+            overflow-y: auto; opacity: 0; transition: opacity 0.5s ease-in-out;
+            background-color: #f8f9fa;
+            --c1: #f0f8ff; --c2: #fff0f5; --c3: #f5fffa; --c4: #fffacd;
+            background-image: linear-gradient(135deg, var(--c1), var(--c2), var(--c3), var(--c4));
+            background-size: 400% 400%; animation: pearlescentAnimation 30s ease infinite;
         }
-    }
+        @keyframes pearlescentAnimation { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+        #${GALLERY_CONTAINER_ID}::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: radial-gradient(ellipse at 70% 20%, rgba(255, 255, 255, 0.45) 0%, transparent 50%); background-repeat: no-repeat; background-size: 200% 200%; animation: metallicLusterAnimation 18s ease-in-out infinite alternate; pointer-events: none; }
+        @keyframes metallicLusterAnimation { 0% { background-position: -50% -50%; } 100% { background-position: 150% 150%; } }
+        #${GALLERY_CONTAINER_ID}::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAAAUVBMVEWFhYWDg4N3d3dtbW17e3t1dXWBgYGHh4d5eXlzc3OLi4ubm5uVlZWPj4+NjY19fX2JiYl/f39sbGxvb29xcXGTk5NpaWmRkZGtra2YmJikpKSnp6e6urqioqK7u7vBwcGRs20AAAAuSURBVDjL7dBEAQAgEMCwA/9/mB8jUr83AST9S7y9cwAAAAAAAAAAAAAAAAAA4G4A0x8AASs0GAAAAABJRU5ErkJggg=='); background-repeat: repeat; opacity: 0.3; animation: grain 8s steps(10) infinite; }
+        @keyframes grain { 0%, 100% { transform: translate(0, 0); } 10% { transform: translate(-5%, -10%); } 20% { transform: translate(-15%, 5%); } 30% { transform: translate(7%, -25%); } 40% { transform: translate(-5%, 25%); } 50% { transform: translate(-15%, 10%); } 60% { transform: translate(15%, 0%); } 70% { transform: translate(0%, 15%); } 80% { transform: translate(3%, 35%); } 90% { transform: translate(-10%, 10%); } }
+        #${GALLERY_CONTAINER_ID}.gallery-active { opacity: 1; }
+        #${GALLERY_BUTTON_ID}{position:fixed;bottom:25px;right:25px;width:55px;height:55px;background:white;color:#333;border-radius:50%;border:none;cursor:pointer;z-index:9998;display:flex;justify-content:center;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.15);transition:transform .2s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;opacity:0;transform:scale(0);animation:fadeIn .5s .2s forwards}#${GALLERY_BUTTON_ID}:hover{transform:scale(1.15);box-shadow:0 8px 25px rgba(0,0,0,.2)}@keyframes fadeIn{to{opacity:1;transform:scale(1)}}#${GALLERY_BUTTON_ID} svg{width:28px;height:28px;color:#8ec5fc;}
+        .gallery-back-btn,.gallery-toolbar{background:rgba(255,255,255,.5);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid rgba(0,0,0,.08);color:#333;transition:all .3s ease}.gallery-back-btn{position:fixed;top:20px;left:20px;width:44px;height:44px;border-radius:50%;z-index:10001;display:flex;justify-content:center;align-items:center;cursor:pointer}.gallery-back-btn:hover{background:rgba(255,255,255,.7);transform:scale(1.1)}.gallery-toolbar{position:fixed;top:20px;right:20px;z-index:10001;display:flex;gap:10px;padding:8px;border-radius:22px;opacity:0;visibility:hidden;transform:translateY(-20px)}#${GALLERY_CONTAINER_ID}:hover .gallery-toolbar{opacity:1;visibility:visible;transform:translateY(0)}.toolbar-btn{width:36px;height:36px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s, color .2s}.toolbar-btn:hover{background:rgba(0,0,0,.05)}.toolbar-btn.active{background:#8ec5fc;color:#fff !important}
+        .gallery-image-list { display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 10vh 0; transition: gap 0.4s ease; }
+        .gallery-card { width: 90%; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); overflow: hidden; position: relative; background-color: rgba(255,255,255,0.2); opacity: 0; will-change: opacity; transition: opacity 0.7s cubic-bezier(0.25, 1, 0.5, 1), aspect-ratio 0.4s ease-out, border-radius 0.4s ease; aspect-ratio: 3 / 4; min-height: 300px; }
+        .gallery-card.is-visible { opacity: 1; }
+        .card-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(40px) saturate(150%); -webkit-backdrop-filter: blur(40px) saturate(150%); transition: opacity 0.8s ease-out; }
+        .thumbnail-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-size: cover; background-position: center; transform: scale(1.1); filter: blur(30px); opacity: 0; transition: opacity 0.6s ease-in; }
+        .thumbnail-bg.reveal { opacity: 1; }
+        .gallery-image-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
-    function createGalleryTriggerButton() { const button = document.createElement("button"); button.id = GALLERY_BUTTON_ID; button.title = "进入图廊"; button.innerHTML = `<span class="btn-text">✨</span>`; button.addEventListener("click", launchGallery); document.body.appendChild(button); }
-    
+        /* [v9.4] Emergence 动画 */
+        .gallery-image {
+            display: block; width: 100%; height: 100%; object-fit: contain;
+            opacity: 0;
+            filter: blur(25px);
+            transform: scale(0.8);
+            will-change: filter, transform, opacity;
+            transition: transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1),
+                        filter 0.7s cubic-bezier(0.25, 1, 0.5, 1),
+                        opacity 0.6s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+        .gallery-image.loaded {
+            opacity: 1;
+            filter: blur(0);
+            transform: scale(1);
+        }
+
+        .progress-indicator { position: absolute; width: 80px; height: 80px; display: flex; justify-content: center; align-items: center; opacity: 0; transform: scale(0.8); transition: all 0.3s ease; pointer-events: none; }
+        .progress-indicator.visible { opacity: 1; transform: scale(1); }
+        .progress-indicator svg { transform: rotate(-90deg); }
+        .progress-circle-bg { fill: none; stroke: rgba(0,0,0,0.1); }
+        .progress-circle-bar { fill: none; stroke: #8ec5fc; stroke-linecap: round; transition: stroke-dashoffset 0.2s linear; }
+        .progress-text { position: absolute; font-size: 16px; font-weight: 500; color: rgba(0,0,0,0.6); font-family: monospace; }
+        .gallery-image-list.mode-standard .gallery-card { max-width: 1000px; } .gallery-image-list.mode-webtoon { gap: 0; } .gallery-image-list.mode-webtoon .gallery-card { width: 100%; max-width: 100%; border-radius: 0; box-shadow: none; background: transparent; } .gallery-image-list.mode-webtoon .gallery-image { object-fit: cover; } .gallery-image-list.mode-webtoon .card-filename, .gallery-image-list.mode-webtoon .thumbnail-bg { display: none; } .gallery-image-list.mode-full-width .gallery-card { width: 95vw; max-width: 95vw; }
+        .card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px black}.gallery-card:hover .card-filename{opacity:1}
+    `);
+
+    // --- [v9.4] 调度器微调: 引入 Image.decode() ---
+    const DownloadManager = {
+        // ... (initialize, schedule, reprioritizeQueue, processQueue 保持不变) ...
+        queue: [], activeDownloads: 0, token: null,
+        initialize(token) { this.token = token; this.queue = []; this.activeDownloads = 0; },
+        schedule(card) { if (!card.dataset.path || this.queue.find(item => item.card === card)) return; this.queue.push({ card, priority: 9999 }); this.processQueue(); },
+        reprioritizeQueue() {
+            const viewportHeight = window.innerHeight;
+            const newQueue = [];
+            document.querySelectorAll('.gallery-card[data-path]').forEach(card => {
+                const rect = card.getBoundingClientRect();
+                if (rect.top < viewportHeight && rect.bottom > 0) newQueue.push({ card, priority: rect.top });
+            });
+            newQueue.sort((a, b) => a.priority - b.priority);
+            this.queue = newQueue; this.processQueue();
+        },
+        async processQueue() {
+            if (document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]')) return;
+            for (const item of this.queue) {
+                if (this.activeDownloads >= MAX_CONCURRENT_DOWNLOADS) break;
+                const card = item.card;
+                if (!card.dataset.path || card.dataset.loading === 'true') continue;
+                this.queue = this.queue.filter(i => i.card !== card);
+                this.loadImageForCard(card, card.dataset.path);
+            }
+        },
+        async loadImageForCard(card, path) {
+            const { signal } = galleryState.controller;
+            card.dataset.loading = 'true'; this.activeDownloads++;
+            try {
+                const metaRes = await fetch(API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
+                if (!metaRes.ok) throw new Error(`API Get failed: ${metaRes.status}`);
+                const metaData = await metaRes.json();
+                const totalSize = metaData.data.size;
+                const isLargeFile = (totalSize / (1024 * 1024)) > LARGE_FILE_THRESHOLD_MB;
+                card.dataset.isLarge = isLargeFile;
+                if (isLargeFile && this.activeDownloads > 1) {
+                    card.dataset.loading = 'false'; this.activeDownloads--; this.schedule(card); return;
+                }
+                let lastError = null;
+                for (let attempt = 1; attempt <= LOAD_RETRY_COUNT + 1; attempt++) {
+                    try {
+                        await this.fetchAndStreamImage(card, path, totalSize);
+                        lastError = null; break;
+                    } catch (error) {
+                        lastError = error; if (error.name === 'AbortError') break;
+                        console.warn(`[Alist Gallery] Attempt ${attempt} failed for ${path}:`, error);
+                        if (attempt <= LOAD_RETRY_COUNT) await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+                    }
+                }
+                if (lastError) throw lastError;
+                card.removeAttribute('data-path');
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    console.error(`[Alist Gallery] Failed to load image for path ${path}.`, error);
+                    const placeholder = card.querySelector('.card-placeholder'); if(placeholder) placeholder.textContent = '加载失败';
+                } else { console.log(`[Alist Gallery] Load cancelled for path ${path}.`); }
+            } finally {
+                const progressIndicator = card.querySelector('.progress-indicator'); if(progressIndicator) progressIndicator.classList.remove('visible');
+                card.dataset.loading = 'false'; this.activeDownloads--; this.processQueue();
+            }
+        },
+        async fetchAndStreamImage(card, path, totalSize) {
+            const { signal } = galleryState.controller;
+            const progressIndicator = card.querySelector('.progress-indicator'), progressCircle = card.querySelector('.progress-circle-bar'), progressText = card.querySelector('.progress-text');
+            if (!progressIndicator || !progressCircle || !progressText) throw new Error("Progress indicator elements not found.");
+            const radius = progressCircle.r.baseVal.value;
+            const circumference = 2 * Math.PI * radius;
+            const updateProgress = (p) => { progressCircle.style.strokeDashoffset = circumference - (p/100)*circumference; progressText.textContent = `${Math.floor(p)}%`; };
+            progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
+            progressIndicator.classList.add('visible'); updateProgress(0);
+            const linkRes = await fetch(API_LINK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
+            if (!linkRes.ok) throw new Error(`API Link failed: ${linkRes.status}`);
+            const linkData = await linkRes.json();
+            const signedUrl = linkData?.data?.url;
+            if (!signedUrl) throw new Error("Signed URL not found.");
+            const response = await fetch(signedUrl, { signal });
+            if (!response.body) throw new Error("Response body is not readable.");
+            const reader = response.body.getReader();
+            let loadedSize = 0, chunks = [];
+            while (true) {
+                const { done, value } = await reader.read(); if (done) break;
+                chunks.push(value); loadedSize += value.length; updateProgress((loadedSize / totalSize) * 100);
+            }
+            const blob = new Blob(chunks);
+            const objectURL = URL.createObjectURL(blob);
+            try {
+                await this.performVisualLoad(card, objectURL, card.querySelector('.card-placeholder'));
+            } finally { URL.revokeObjectURL(objectURL); }
+        },
+        // [v9.4] performVisualLoad 升级，使用 Image.decode()
+        async performVisualLoad(card, url, placeholder) {
+            // Step 1: 准备好所有 DOM 元素
+            const tempImg = new Image();
+            tempImg.src = url;
+            // 等待获取尺寸
+            await new Promise((res, rej) => { tempImg.onload = res; tempImg.onerror = rej; });
+
+            card.style.aspectRatio = tempImg.naturalWidth / tempImg.naturalHeight;
+            const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+            canvas.width = 200; canvas.height = 200 / (tempImg.naturalWidth / tempImg.naturalHeight);
+            ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
+            const thumbnailUrl = canvas.toDataURL('image/webp', 0.8);
+
+            const thumbBg = document.createElement('div');
+            thumbBg.className = 'thumbnail-bg';
+            thumbBg.style.backgroundImage = `url(${thumbnailUrl})`;
+            card.prepend(thumbBg);
+
+            const imageWrapper = document.createElement('div');
+            imageWrapper.className = 'gallery-image-wrapper';
+            const finalImage = new Image();
+            finalImage.className = 'gallery-image';
+            imageWrapper.appendChild(finalImage);
+            card.appendChild(imageWrapper);
+
+            // Step 2: [OPTIMIZATION] 解码优先
+            finalImage.src = url; // 触发下载
+            try {
+                if (finalImage.decode) {
+                    await finalImage.decode();
+                } else {
+                    // Fallback for browsers without .decode()
+                    await new Promise((res, rej) => { finalImage.onload = res; finalImage.onerror = rej; });
+                }
+            } catch(e) {
+                console.error("Image decoding failed:", e);
+                throw e; // 抛出错误，让上层重试逻辑捕获
+            }
+
+            // Step 3: 解码完成后，编排动画
+            if (placeholder) {
+                placeholder.style.opacity = '0';
+                placeholder.addEventListener('transitionend', () => placeholder.remove(), { once: true });
+            }
+
+            requestAnimationFrame(() => {
+                thumbBg.classList.add('reveal');
+                // 延迟一帧触发主图动画，确保背景动画先开始
+                requestAnimationFrame(() => {
+                    finalImage.classList.add('loaded');
+                });
+            });
+        }
+    };
+
+    // --- 辅助函数与主逻辑 (不变) ---
+    function debounce(func, wait) { let timeout; return function executedFunction(...args) { const later = () => { clearTimeout(timeout); func(...args); }; clearTimeout(timeout); timeout = setTimeout(later, wait); }; }
+    function scanForImages() {
+        const links = Array.from(document.querySelectorAll("a.list-item"));
+        const foundImages = links.map(link => {
+            const nameElement = link.querySelector("p.name"); if (!nameElement) return null;
+            const text = nameElement.textContent.trim();
+            const isImage = IMAGE_EXTENSIONS.some(ext => text.toLowerCase().endsWith(ext.toLowerCase()));
+            const rawPath = decodeURIComponent(new URL(link.href).pathname);
+            return isImage ? { name: text, path: rawPath } : null;
+        }).filter(Boolean);
+        const btn = document.getElementById(GALLERY_BUTTON_ID);
+        if (foundImages.length >= TRIGGER_IMAGE_COUNT) {
+            imageList = foundImages; if (!btn) createGalleryTriggerButton();
+        } else { imageList = []; if (btn) btn.remove(); }
+    }
+    function createGalleryTriggerButton() {
+        const button = document.createElement("button"); button.id = GALLERY_BUTTON_ID; button.title = "进入沉浸式图廊";
+        button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
+        button.addEventListener("click", launchGallery); document.body.appendChild(button);
+    }
     function launchGallery() {
         if (galleryState.isActive) return;
-        galleryState = initialGalleryState();
-        galleryState.isActive = true;
-        galleryState.lastScrollY = window.scrollY;
+        galleryState.isActive = true; galleryState.lastScrollY = window.scrollY; galleryState.controller = new AbortController();
         document.body.classList.add('gallery-is-active');
-
-        galleryState.worker = createWorker();
-        galleryState.worker.onmessage = handleWorkerMessage;
-
-        const galleryContainer = document.createElement("div");
-        galleryContainer.id = GALLERY_CONTAINER_ID;
-        document.body.appendChild(galleryContainer);
-        galleryContainer.innerHTML = `<button class="gallery-back-btn" title="返回 (Esc)">ESC</button><div class="gallery-toolbar"><button class="toolbar-btn active" data-mode="mode-standard" title="标准模式">STD</button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式">WEB</button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度">FULL</button></div><div class="gallery-image-list mode-standard"></div>`;
-
+        const galleryContainer = document.createElement("div"); galleryContainer.id = GALLERY_CONTAINER_ID; document.body.appendChild(galleryContainer);
+        galleryContainer.innerHTML = `<button class="gallery-back-btn" title="返回 (Esc)"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg></button><div class="gallery-toolbar"><button class="toolbar-btn active" data-mode="mode-standard" title="标准模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2" /></svg></button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12H2m4-4-4 4 4 4M18 8l4 4-4 4"/></svg></button></div><div class="gallery-image-list mode-standard"></div>`;
         const imageListContainer = galleryContainer.querySelector(".gallery-image-list");
-        const fragment = document.createDocumentFragment();
-        imageList.forEach((image, index) => {
-            const card = document.createElement("div");
-            card.className = "gallery-card";
-            card.id = `gallery-card-${index}`;
-            card.innerHTML = `<div class="card-placeholder"></div><div class="card-filename">${image.name}</div>`;
-            fragment.appendChild(card);
-            galleryState.cards[index] = { state: 'idle', el: card, path: image.path, id: index };
+        imageList.forEach(image => {
+            const card = document.createElement("div"); card.className = "gallery-card"; card.dataset.path = image.path;
+            card.innerHTML = `<div class="card-placeholder"><div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div></div><div class="card-filename">${image.name}</div>`;
+            imageListContainer.appendChild(card);
         });
-        imageListContainer.appendChild(fragment);
-
         requestAnimationFrame(() => galleryContainer.classList.add("gallery-active"));
-        setupEventListeners();
-        setupLazyLoading();
-        startLoadLoop();
-        prefetchNextImages();
+        setupEventListeners(); setupLazyLoading();
     }
-
     function closeGallery() {
         if (!galleryState.isActive) return;
+        if (galleryState.controller) galleryState.controller.abort();
+        DownloadManager.queue = []; galleryState.isActive = false;
         const galleryContainer = document.getElementById(GALLERY_CONTAINER_ID);
         if (galleryContainer) {
-            galleryContainer.style.opacity = '0';
+            galleryContainer.classList.remove("gallery-active");
             galleryContainer.addEventListener("transitionend", () => {
-                galleryContainer.remove();
-                document.body.classList.remove('gallery-is-active');
+                galleryContainer.remove(); document.body.classList.remove('gallery-is-active');
                 window.scrollTo(0, galleryState.lastScrollY);
-                if (galleryState.worker) galleryState.worker.terminate();
-                if (galleryState.loadLoopId) cancelIdleCallback(galleryState.loadLoopId);
-                galleryState.prefetchController.abort();
-                galleryState = {};
-                if (intersectionObserver) intersectionObserver.disconnect();
             }, { once: true });
         }
         document.removeEventListener("keydown", handleKeyPress);
+        if (intersectionObserver) { intersectionObserver.disconnect(); intersectionObserver = null; }
     }
-    
+    function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
     function setupEventListeners() {
-        const backBtn = document.querySelector(".gallery-back-btn");
-        if (backBtn) backBtn.addEventListener("click", closeGallery);
+        document.querySelector(".gallery-back-btn").addEventListener("click", closeGallery);
         document.addEventListener("keydown", handleKeyPress);
         const toolbar = document.querySelector(".gallery-toolbar"), imageListContainer = document.querySelector(".gallery-image-list");
         if (toolbar && imageListContainer) {
             toolbar.addEventListener("click", e => {
-                const button = e.target.closest(".toolbar-btn");
-                if (button) {
-                    const mode = button.dataset.mode;
-                    imageListContainer.className = `gallery-image-list ${mode}`;
-                    toolbar.querySelector(".active")?.classList.remove("active");
-                    button.classList.add("active");
-                }
+                const button = e.target.closest(".toolbar-btn"); if (!button) return;
+                const mode = button.dataset.mode;
+                ["mode-standard", "mode-webtoon", "mode-full-width"].forEach(m => imageListContainer.classList.remove(m));
+                imageListContainer.classList.add(mode);
+                toolbar.querySelectorAll(".toolbar-btn").forEach(btn => btn.classList.remove("active"));
+                button.classList.add("active");
             });
         }
     }
-    
-    function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
-    
-    function startLoadLoop() {
-        const loop = () => {
-            if (!galleryState.isActive) return;
-            while (galleryState.activeLoads < galleryState.maxConcurrentLoads) {
-                let nextTask = Array.from(galleryState.visibleSet).map(id => galleryState.cards[id]).find(task => task && task.state === 'idle');
-                if (!nextTask) {
-                    nextTask = galleryState.cards.find(t => t && t.state === 'idle');
-                }
-                if (nextTask) {
-                    transitionState(nextTask, 'FETCH');
-                } else break;
-            }
-            galleryState.loadLoopId = requestIdleCallback(loop);
-        };
-        galleryState.loadLoopId = requestIdleCallback(loop);
-    }
-    
-    async function fetchSignedUrlAndProcess(task) {
-        galleryState.activeLoads++;
-        try {
-            const isVisible = galleryState.visibleSet.has(task.id);
-            const token = localStorage.getItem('token');
-            const response = await fetch(API_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': token }, body: JSON.stringify({ path: task.path, password: "" }), priority: isVisible ? 'high' : 'low' });
-            if (!response.ok) throw new Error(`API failed: ${response.status}`);
-            const data = await response.json();
-            const signedUrl = data?.data?.url;
-            if (!signedUrl) throw new Error("Signed URL not found.");
-            task.signedUrl = signedUrl;
-            transitionState(task, 'FETCH_SUCCESS');
-            galleryState.worker.postMessage({ id: task.id, signedUrl });
-        } catch (error) {
-            console.error(`Error for path ${task.path}:`, error);
-            transitionState(task, 'FETCH_ERROR');
-        }
-    }
-    
-    function handleWorkerMessage({ data: { id, thumbnailBlob, width, height, error, imageBitmap } }) {
-        const task = galleryState.cards[id];
-        if (!task) return;
-        if (error) { transitionState(task, 'WORKER_ERROR'); return; }
-        task.imageBitmap = imageBitmap;
-        task.thumbnailBlob = thumbnailBlob;
-        task.width = width;
-        task.height = height;
-        transitionState(task, 'WORKER_SUCCESS');
-    }
-
     function setupLazyLoading() {
-        if (intersectionObserver) intersectionObserver.disconnect();
-        intersectionObserver = new IntersectionObserver(entries => {
+        const token = localStorage.getItem('token'); if (!token) { console.warn('[Alist Gallery] Token not found.'); return; }
+        DownloadManager.initialize(token);
+        const galleryContainer = document.getElementById(GALLERY_CONTAINER_ID);
+        const debouncedReprioritize = debounce(() => DownloadManager.reprioritizeQueue(), 150);
+        galleryContainer.addEventListener('scroll', debouncedReprioritize);
+        intersectionObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
-                const id = parseInt(entry.target.id.replace('gallery-card-', ''));
-                if (galleryState.cards[id]) {
-                    if (entry.isIntersecting) {
-                        galleryState.visibleSet.add(id);
-                        if (galleryState.cards[id].state === 'idle') {
-                            galleryState.cards[id].el.classList.add('is-visible');
-                            requestIdleCallback(startLoadLoop);
-                        }
-                        prefetchNextImages(id);
-                    } else {
-                        galleryState.visibleSet.delete(id);
-                    }
-                }
+                if (entry.isIntersecting) { entry.target.classList.add('is-visible'); DownloadManager.schedule(entry.target); }
             });
-        }, { root: null, rootMargin: '150% 0px', threshold: 0.01 });
-        galleryState.cards.forEach(task => intersectionObserver.observe(task.el));
+        }, { root: galleryContainer, rootMargin: '100% 0px', threshold: 0.01 });
+        document.querySelectorAll('.gallery-card').forEach(card => intersectionObserver.observe(card));
+        setTimeout(() => DownloadManager.reprioritizeQueue(), 100);
     }
-
-    async function prefetchNextImages(currentIndex = 0) {
-        for (let i = 1; i <= 2; i++) {
-            const nextIndex = currentIndex + i;
-            if (nextIndex < galleryState.cards.length) {
-                const task = galleryState.cards[nextIndex];
-                if (task && !task.prefetched) {
-                    task.prefetched = true;
-                    try {
-                        const token = localStorage.getItem('token');
-                        const response = await fetch(API_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': token }, body: JSON.stringify({ path: task.path, password: "" }), priority: 'low' });
-                        const data = await response.json();
-                        const signedUrl = data?.data?.url;
-                        if (signedUrl) {
-                            const link = document.createElement('link');
-                            link.rel = 'prefetch';
-                            link.href = signedUrl;
-                            link.signal = galleryState.prefetchController.signal;
-                            document.head.appendChild(link);
-                        }
-                    } catch (e) {}
-                }
-            }
-        }
-    }
-    
-    function transitionState(task, action) {
-        const card = task.el;
-        switch (task.state) {
-            case 'idle':
-                if (action === 'FETCH') {
-                    task.state = 'fetching';
-                    fetchSignedUrlAndProcess(task);
-                }
-                break;
-            case 'fetching':
-                if (action === 'FETCH_SUCCESS') task.state = 'pending_worker';
-                else if (action === 'FETCH_ERROR') {
-                    task.state = 'error';
-                    card.querySelector('.card-placeholder').textContent = 'Error';
-                    galleryState.activeLoads--;
-                }
-                break;
-            case 'pending_worker':
-                if (action === 'WORKER_SUCCESS') {
-                    task.state = 'animating';
-                    animateCard(task);
-                } else if (action === 'WORKER_ERROR') {
-                    task.state = 'error';
-                    card.querySelector('.card-placeholder').textContent = 'Error';
-                    galleryState.activeLoads--;
-                }
-                break;
-        }
-    }
-
-    function animateCard(task) {
-        const { el: card, thumbnailBlob, width, height, imageBitmap } = task;
-        if (!imageBitmap) {
-            task.state = 'error';
-            card.querySelector('.card-placeholder').textContent = 'Bitmap Error';
-            galleryState.activeLoads--;
-            return;
-        }
-        const aspectRatio = width / height;
-        const isLandscape = width > height;
-        const isPortraitScreen = window.innerHeight > window.innerWidth;
-        const EASE = { quart: 'cubic-bezier(0.165, 0.84, 0.44, 1)', cubic: 'cubic-bezier(0.645, 0.045, 0.355, 1)' };
-        const first = card.getBoundingClientRect();
-        card.style.overflowAnchor = 'none';
-
-        if (isLandscape && isPortraitScreen && !card.closest('.mode-full-width, .mode-webtoon')) {
-            card.style.minHeight = 'auto';
-            card.style.width = '95vw';
-            card.style.maxWidth = '95vw';
-        }
-        card.style.aspectRatio = aspectRatio;
-        
-        const last = card.getBoundingClientRect();
-        const deltaX = first.left - last.left;
-        const deltaY = first.top - last.top;
-        const deltaW = first.width / last.width;
-        const deltaH = first.height / last.height;
-
-        card.animate([{ transformOrigin: 'top left', transform: `translate(${deltaX}px, ${deltaY}px) scale(${deltaW}, ${deltaH})` }, { transformOrigin: 'top left', transform: 'none' }], { duration: 600, easing: EASE.cubic });
-        
-        const thumbnailUrl = URL.createObjectURL(thumbnailBlob);
-        const thumbBg = document.createElement('div');
-        thumbBg.className = 'thumbnail-bg';
-        thumbBg.style.backgroundImage = `url(${thumbnailUrl})`;
-        card.prepend(thumbBg);
-        
-        thumbBg.animate([{ clipPath: 'inset(50% 50% 50% 50% round 16px)' }, { clipPath: 'inset(0% 0% 0% 0% round 16px)' }], { duration: 800, delay: 100, easing: EASE.quart, fill: 'forwards' }).finished
-            .then(() => {
-                const finalCanvas = document.createElement('canvas');
-                finalCanvas.className = 'gallery-image';
-                finalCanvas.width = width;
-                finalCanvas.height = height;
-                const ctx = finalCanvas.getContext('2d');
-                ctx.drawImage(imageBitmap, 0, 0);
-                imageBitmap.close();
-                
-                const imageWrapper = document.createElement('div');
-                imageWrapper.className = 'gallery-image-wrapper';
-                imageWrapper.appendChild(finalCanvas);
-                card.appendChild(imageWrapper);
-                
-                imageWrapper.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 1200, easing: EASE.quart, fill: 'forwards' });
-                
-                const placeholder = card.querySelector('.card-placeholder');
-                if (placeholder) placeholder.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 800, fill: 'forwards' }).onfinish = () => placeholder.remove();
-                
-                URL.revokeObjectURL(thumbnailUrl);
-                task.state = 'done';
-                galleryState.activeLoads--;
-                card.style.overflowAnchor = 'auto';
-            });
-    }
-
-    // --- Initializer and SPA Navigation Handler (Rock-solid version) ---
-    function initializeOrReset() {
-        console.log('[Alist Gallery] Initializing or Resetting...');
-        
-        // Cleanup previous instances if they exist
-        const oldBtn = document.getElementById(GALLERY_BUTTON_ID);
-        if (oldBtn) oldBtn.remove();
-        if (intersectionObserver) intersectionObserver.disconnect();
-        
-        // Reset state
-        imageList = [];
-        galleryState = {};
-
-        // Start fresh
-        scanForImages();
-    }
-    
-    const rootObserver = new MutationObserver((mutations, obs) => {
-        const mainContentArea = document.querySelector(".obj-box");
-        if (mainContentArea) {
-            console.log('[Alist Gallery] Main content area found. Attaching observers.');
-            // This observer watches for navigations inside the main content area
-            const contentObserver = new MutationObserver(debounce(initializeOrReset, 300));
-            contentObserver.observe(mainContentArea, { childList: true, subtree: true });
-            
-            // Initial scan for the first load
-            initializeOrReset();
-            
-            // We are set up, disconnect the root observer
-            obs.disconnect();
-        }
-    });
-
-    function debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    }
-    
+    const observer = new MutationObserver(() => { setTimeout(() => { if (document.querySelector('.list.viselect-container')) { scanForImages(); } else { const btn = document.getElementById(GALLERY_BUTTON_ID); if (btn) btn.remove(); } }, 500); });
+    const rootObserver = new MutationObserver((_, obs) => { const mainContentArea = document.querySelector(".obj-box"); if (mainContentArea) { observer.observe(mainContentArea, { childList: true, subtree: true }); scanForImages(); obs.disconnect(); } });
     rootObserver.observe(document.body, { childList: true, subtree: true });
 
 })();
