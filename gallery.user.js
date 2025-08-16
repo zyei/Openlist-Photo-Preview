@@ -77,21 +77,26 @@
     function startLoadLoop() {
         const loop = () => {
             if (!galleryState.isActive) return;
-            
-            // 简化逻辑：始终从整个队列中寻找下一个待办任务
+
+            // 检查是否有空闲的加载槽位
             while (galleryState.activeLoads < galleryState.maxConcurrentLoads) {
-                const nextTask = galleryState.cards.find(t => t && t.state === 'pending');
+                // 寻找一个可以开始加载的任务 (可见 > 其他)
+                let nextTask = Array.from(galleryState.visibleSet)
+                    .map(id => galleryState.cards[id])
+                    .find(task => task && task.state === 'idle');
+                
+                if (!nextTask) {
+                    nextTask = galleryState.cards.find(t => t && t.state === 'idle');
+                }
 
                 if (nextTask) {
+                    // 改变状态，并立即开始处理，不再仅仅是推入队列
                     transitionState(nextTask, 'FETCH');
-                    galleryState.activeLoads++;
-                    fetchSignedUrlAndProcess(nextTask);
                 } else {
-                    break; // 队列中没有待办任务了
+                    break; // 没有更多空闲任务了
                 }
             }
             
-            // 保持 requestIdleCallback 以实现空闲时处理
             galleryState.loadLoopId = requestIdleCallback(loop);
         };
         galleryState.loadLoopId = requestIdleCallback(loop);
