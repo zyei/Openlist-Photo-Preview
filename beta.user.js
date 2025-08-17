@@ -1,266 +1,171 @@
 // ==UserScript==
-// @name         Alist 沉浸式图廊 (Immersive Gallery) v10.0 Odyssey
+// @name         Alist 沉浸式图廊 (Immersive Gallery) v13.0 Integrated
 // @namespace    http://tampermonkey.net/
-// @version      10.0
-// @description  v10.0 "Odyssey" - The definitive edition. Introduces an adaptive engine that optimizes animations and backgrounds for mobile devices, ensuring peak performance and stability on any platform, while retaining the full visual experience on desktop.
+// @version      13.0
+// @description  v13.0 "Integrated" - The final evolution. This version seamlessly integrates the gallery trigger into Alist's native toolbar and introduces a hyper-optimized Webtoon mode with predictive preloading and virtual placeholders for an unparalleled, fluid reading experience. This is the ultimate synthesis of function and form.
 // @author       Your Name & AI
 // @license      MIT
 // @include      /^https?://127\.0\.0\.1:5244/.*$/
 // @include      /^https?://192\.168\.\d{1,3}\.\d{1,3}:5244/.*$/
-// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjOGFjNmZmIiBkPSJNMjIgMTZWNGEyIDIgMCAwIDAtMi0ySDhNMyA2djEyYTIgMiAwIDAgMCAyIDJoMTJhMiAyIDAgMCAwIDItMlY4bC00LTRINWExIDEgMCAwIDEgMC0yaDEwVjRoNFYybC00IDRIM2EyIDIgMCAwIDAtMiAydjE0YTIgMiAwIDAgMCAyIDJoMTRhMiAyIDAgMCAwIDItMlY2aC0ydjEwaC04bC0yLTItMiAySDV2LTRoN2wtMy0zSDVhMSAxIDAgMCAxIDAtMmgzLjE3MmwzIDNIMTlWNkwzIDZtMi0yaDEwbDMgM0g1YTEgMSAwIDAgMSAwLTJtNSA5YTEuMSAxLjUgMCAxIDEgMC0zYTEuNSAxLjUgMCAwIDEgMCAzWiIvPjwvc3ZnPg==
+// @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjOGFjNmZmIiBkPSJNMjIgMTZWNGEyIDIgMCAwIDAtMi0ySDhNMyA2djEyYTIgMiAwIDAgMCAyIDJoMTJhMiAyIDAgMCAwIDItMlY4bC04LTRINWExIDEgMCAwIDEgMC0yaDEwVjRoNFYybC00IDRIM2EyIDIgMCAwIDAtMiAydjE4YTIgMiAwIDAgMCAyIDJoMTRhMiAyIDAgMCAwIDItMlY2aC0ydjEwaC04bC0yLTItMiAySDV2LTRoN2wtMy0zSDVhMSAxIDAgMCAxIDAtMmgzLjE3MmwzIDNIMTlWNkwzIDZtMi0yaDEwbDMgM0g1YTEgMSAwIDAgMSAwLTJtNSA5YTEuMSAxLjUgMCAxIDEgMC0zYTEuNSAxLjUgMCAwIDEgMCAzWiIvPjwvc3ZnPg==
 // @grant        GM_addStyle
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // --- [v10.0] 环境侦测 ---
-    const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
-    console.log(`[Alist Gallery] Script v10.0 (Odyssey) is running! Mobile mode: ${IS_MOBILE}`);
+    console.log('[Alist Gallery] Script v13.0 (Integrated) is running!');
 
     // --- 配置项 ---
     const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', 'avif', '.svg', '.JPG', '.jxl', '.JXL'];
     const TRIGGER_IMAGE_COUNT = 5;
-    const GALLERY_BUTTON_ID = 'immersive-gallery-trigger-btn';
+    const GALLERY_BUTTON_ID = 'integrated-gallery-trigger-btn'; // 新ID
     const GALLERY_CONTAINER_ID = 'immersive-gallery-container';
     const API_LINK_ENDPOINT = '/api/fs/link';
     const API_GET_ENDPOINT = '/api/fs/get';
-    const LARGE_FILE_THRESHOLD_MB = 5;
+    const LARGE_FILE_THRESHOLD_MB = 10;
     const MAX_CONCURRENT_DOWNLOADS = 3;
     const LOAD_RETRY_COUNT = 2;
+    const METADATA_PRELOAD_THRESHOLD = 20; // 超过20张图时预加载元数据
 
     let imageList = [];
-    let intersectionObserver = null;
+    let loadObserver = null;
+    let animationObserver = null;
     let galleryState = { isActive: false, lastScrollY: 0, controller: null };
 
-    // --- [v10.0] 自适应样式 ---
+    // --- [v13.0] 样式最终版 ---
     GM_addStyle(`
-        /* --- 基础样式 --- */
+        :root { --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1); }
         body.gallery-is-active { overflow: hidden; }
         body.gallery-is-active > #root { position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
-
-        /* --- 桌面端: Aura 辉光背景 --- */
-        #${GALLERY_CONTAINER_ID} {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999;
-            overflow-y: auto; opacity: 0; transition: opacity 0.5s ease-in-out;
-            background-color: #f8f9fa;
-            --c1: #f0f8ff; --c2: #fff0f5; --c3: #f5fffa; --c4: #fffacd;
-            background-image: linear-gradient(135deg, var(--c1), var(--c2), var(--c3), var(--c4));
-            background-size: 400% 400%; animation: pearlescentAnimation 30s ease infinite;
-        }
-        @keyframes pearlescentAnimation { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-        #${GALLERY_CONTAINER_ID}::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-image: radial-gradient(ellipse at 70% 20%, rgba(255, 255, 255, 0.45) 0%, transparent 50%); background-repeat: no-repeat; background-size: 200% 200%; animation: metallicLusterAnimation 18s ease-in-out infinite alternate; pointer-events: none; }
-        @keyframes metallicLusterAnimation { 0% { background-position: -50% -50%; } 100% { background-position: 150% 150%; } }
-        #${GALLERY_CONTAINER_ID}::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAAAUVBMVEWFhYWDg4N3d3dtbW17e3t1dXWBgYGHh4d5eXlzc3OLi4ubm5uVlZWPj4+NjY19fX2JiYl/f39sbGxvb29xcXGTk5NpaWmRkZGtra2YmJikpKSnp6e6urqioqK7u7vBwcGRs20AAAAuSURBVDjL7dBEAQAgEMCwA/9/mB8jUr83AST9S7y9cwAAAAAAAAAAAAAAAAAA4G4A0x8AASs0GAAAAABJRU5ErkJggg=='); background-repeat: repeat; opacity: 0.3; animation: grain 8s steps(10) infinite; }
-        @keyframes grain { 0%, 100% { transform: translate(0, 0); } 10% { transform: translate(-5%, -10%); } 20% { transform: translate(-15%, 5%); } 30% { transform: translate(7%, -25%); } 40% { transform: translate(-5%, 25%); } 50% { transform: translate(-15%, 10%); } 60% { transform: translate(15%, 0%); } 70% { transform: translate(0%, 15%); } 80% { transform: translate(3%, 35%); } 90% { transform: translate(-10%, 10%); } }
-
-        /* --- [v10.0] 移动端: 优雅降级 --- */
-        #${GALLERY_CONTAINER_ID}.mobile-mode::before,
-        #${GALLERY_CONTAINER_ID}.mobile-mode::after {
-            animation: none !important;
-            background-image: none !important;
-        }
-        #${GALLERY_CONTAINER_ID}.mobile-mode {
-            background: #f4f6f8; /* 静态、柔和的背景色 */
-        }
-        html[data-theme="dark"] #${GALLERY_CONTAINER_ID}.mobile-mode {
-             background: #1a202c; /* 适配暗色模式 */
-        }
-
-        /* --- 通用组件样式 --- */
+        #${GALLERY_CONTAINER_ID} { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; overflow: hidden; opacity: 0; transition: opacity 0.5s ease-in-out; background-color: #f0f2f5; }
+        html[data-theme="dark"] #${GALLERY_CONTAINER_ID} { background-color: #1a202c; }
+        #${GALLERY_CONTAINER_ID} .gallery-scroll-container { width: 100%; height: 100%; overflow-y: auto; }
+        #${GALLERY_CONTAINER_ID}::before { content: ''; position: fixed; top: 50%; left: 50%; width: 200vmax; height: 200vmax; z-index: -1; --c1: #f0f8ff; --c2: #fff0f5; --c3: #f5fffa; --c4: #fffacd; background: conic-gradient(from 0deg at 75% -50%, var(--c1), var(--c2), var(--c3), var(--c4), var(--c1)); animation: aura-rotation 28s linear infinite; transform: translate(-50%, -50%); }
+        @keyframes aura-rotation { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
         #${GALLERY_CONTAINER_ID}.gallery-active { opacity: 1; }
-        #${GALLERY_BUTTON_ID}{position:fixed;bottom:25px;right:25px;width:55px;height:55px;background:white;color:#333;border-radius:50%;border:none;cursor:pointer;z-index:9998;display:flex;justify-content:center;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.15);transition:transform .2s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;opacity:0;transform:scale(0);animation:fadeIn .5s .2s forwards}#${GALLERY_BUTTON_ID}:hover{transform:scale(1.15);box-shadow:0 8px 25px rgba(0,0,0,.2)}@keyframes fadeIn{to{opacity:1;transform:scale(1)}}#${GALLERY_BUTTON_ID} svg{width:28px;height:28px;color:#8ec5fc;}
         .gallery-back-btn,.gallery-toolbar{background:rgba(255,255,255,.5);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid rgba(0,0,0,.08);color:#333;transition:all .3s ease}.gallery-back-btn{position:fixed;top:20px;left:20px;width:44px;height:44px;border-radius:50%;z-index:10001;display:flex;justify-content:center;align-items:center;cursor:pointer}.gallery-back-btn:hover{background:rgba(255,255,255,.7);transform:scale(1.1)}.gallery-toolbar{position:fixed;top:20px;right:20px;z-index:10001;display:flex;gap:10px;padding:8px;border-radius:22px;opacity:0;visibility:hidden;transform:translateY(-20px)}#${GALLERY_CONTAINER_ID}:hover .gallery-toolbar{opacity:1;visibility:visible;transform:translateY(0)}.toolbar-btn{width:36px;height:36px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s, color .2s}.toolbar-btn:hover{background:rgba(0,0,0,.05)}.toolbar-btn.active{background:#8ec5fc;color:#fff !important}
-        .gallery-image-list { display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 10vh 0; transition: gap 0.4s ease; }
-        .gallery-card { width: 90%; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); overflow: hidden; position: relative; background-color: rgba(255,255,255,0.2); opacity: 0; will-change: opacity; transition: opacity 0.7s cubic-bezier(0.25, 1, 0.5, 1), aspect-ratio 0.4s ease-out, border-radius 0.4s ease; aspect-ratio: 3 / 4; min-height: 300px; }
-        .gallery-card.is-visible { opacity: 1; }
-        .card-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(40px) saturate(150%); -webkit-backdrop-filter: blur(40px) saturate(150%); transition: opacity 0.8s ease-out; }
-        .thumbnail-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-size: cover; background-position: center; transform: scale(1.1); filter: blur(30px); opacity: 0; transition: opacity 0.6s ease-in; }
-        .thumbnail-bg.reveal { opacity: 1; }
+        .gallery-image-list { display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 10vh 0; }
+        .gallery-card { width: 90%; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); overflow: hidden; position: relative; background-color: rgba(255,255,255,0.1); opacity: 0; transform: translateY(30px); will-change: opacity, transform; transition: opacity 0.6s var(--ease-out-quart), transform 0.6s var(--ease-out-quart), aspect-ratio 0.4s ease-out; aspect-ratio: 3 / 4; min-height: 300px; }
+        .gallery-card.is-visible { opacity: 1; transform: translateY(0); }
+        .card-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background-color: rgba(0,0,0,0.05); transition: opacity 1.2s var(--ease-out-quart); }
         .gallery-image-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        
-        /* --- 桌面端: Emergence 动画 --- */
-        .gallery-image {
-            display: block; width: 100%; height: 100%; object-fit: contain;
-            opacity: 0; filter: blur(25px); transform: scale(0.8);
-            will-change: filter, transform, opacity;
-            transition: transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1),
-                        filter 0.7s cubic-bezier(0.25, 1, 0.5, 1),
-                        opacity 0.6s cubic-bezier(0.25, 1, 0.5, 1);
-        }
-        .gallery-image.loaded { opacity: 1; filter: blur(0); transform: scale(1); }
-
-        /* --- [v10.0] 移动端: 动画降级 --- */
-        .mobile-mode .gallery-image {
-            filter: none; /* 移除模糊效果 */
-            transition: transform 0.7s cubic-bezier(0.34, 1.56, 0.64, 1),
-                        opacity 0.6s cubic-bezier(0.25, 1, 0.5, 1);
-        }
-        .mobile-mode .gallery-image.loaded { filter: none; }
-
-        /* --- 通用组件样式 --- */
-        .progress-indicator { position: absolute; width: 80px; height: 80px; display: flex; justify-content: center; align-items: center; opacity: 0; transform: scale(0.8); transition: all 0.3s ease; pointer-events: none; }
+        .gallery-image, .blur-overlay { display: block; width: 100%; height: 100%; object-fit: contain; position: absolute; top: 0; left: 0; will-change: opacity; }
+        .gallery-image { opacity: 0; transition: opacity 1.2s var(--ease-out-quart); }
+        .gallery-image.is-animating { opacity: 1; }
+        .blur-overlay { opacity: 1; filter: blur(20px); transform: scale(1.1); transition: opacity 1.2s var(--ease-out-quart); }
+        .blur-overlay.is-animating { opacity: 0; }
+        .progress-indicator { position: absolute; width: 80px; height: 80px; display: flex; justify-content: center; align-items: center; opacity: 0; transform: scale(0.8); transition: all 0.3s ease; pointer-events: none; z-index: 5; }
         .progress-indicator.visible { opacity: 1; transform: scale(1); }
-        .progress-indicator svg { transform: rotate(-90deg); }
-        .progress-circle-bg { fill: none; stroke: rgba(0,0,0,0.1); }
+        .progress-indicator svg { transform: rotate(-90deg); } .progress-circle-bg { fill: none; stroke: rgba(0,0,0,0.1); }
         .progress-circle-bar { fill: none; stroke: #8ec5fc; stroke-linecap: round; transition: stroke-dashoffset 0.2s linear; }
         .progress-text { position: absolute; font-size: 16px; font-weight: 500; color: rgba(0,0,0,0.6); font-family: monospace; }
-        .gallery-image-list.mode-standard .gallery-card { max-width: 1000px; } .gallery-image-list.mode-webtoon { gap: 0; } .gallery-image-list.mode-webtoon .gallery-card { width: 100%; max-width: 100%; border-radius: 0; box-shadow: none; background: transparent; } .gallery-image-list.mode-webtoon .gallery-image { object-fit: cover; } .gallery-image-list.mode-webtoon .card-filename, .gallery-image-list.mode-webtoon .thumbnail-bg { display: none; } .gallery-image-list.mode-full-width .gallery-card { width: 95vw; max-width: 95vw; }
-        .card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px black}.gallery-card:hover .card-filename{opacity:1}
+        .gallery-image-list.mode-standard .gallery-card { max-width: 1000px; } .gallery-image-list.mode-webtoon { gap: 0; } .gallery-image-list.mode-webtoon .gallery-card { width: 100%; max-width: 100%; border-radius: 0; box-shadow: none; background: transparent; } .gallery-image-list.mode-webtoon .gallery-image { object-fit: cover; } .gallery-image-list.mode-webtoon .card-filename, .gallery-image-list.mode-webtoon .blur-overlay { display: none; } .gallery-image-list.mode-full-width .gallery-card { width: 95vw; max-width: 95vw; }
+        .card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px black; z-index: 4;}.gallery-card:hover .card-filename{opacity:1}
+        #${GALLERY_BUTTON_ID} { color: #526781; } /* 按钮颜色适配 */
+        html[data-theme="dark"] #${GALLERY_BUTTON_ID} { color: #a1aab9; }
+        .gallery-global-loader { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10002; color: #8ec5fc; }
     `);
 
-    // --- [v10.0] 调度器最终版: 引入解码容错 ---
+    // --- 模块化代码 ---
+    const ToolbarManager = {
+        iconSVG: `<path fill="currentColor" d="M4 4h7L9 2L4 2c-1.1 0-2 .9-2 2v7l2-2V4zm16 0h-7l2-2h5c1.1 0 2 .9 2 2v5l-2-2V4zM4 20h7l-2 2H4c-1.1 0-2-.9-2-2v-5l2 2v5zm16 0h-7l2 2h5c1.1 0 2-.9 2-2v-5l-2 2v5z"></path>`,
+        injectButton() {
+            if (document.getElementById(GALLERY_BUTTON_ID)) return;
+            const toolbar = document.querySelector('.left-toolbar-in');
+            const refreshButton = toolbar?.querySelector('svg[tips="refresh"]');
+            if (!toolbar || !refreshButton) return;
+            const newButton = refreshButton.cloneNode(true);
+            newButton.id = GALLERY_BUTTON_ID;
+            newButton.setAttribute('tips', '沉浸式图廊 (Immersive Gallery)');
+            newButton.innerHTML = this.iconSVG;
+            newButton.addEventListener('click', launchGallery);
+            toolbar.prepend(newButton);
+        },
+        removeButton() {
+            const button = document.getElementById(GALLERY_BUTTON_ID);
+            if (button) button.remove();
+        }
+    };
+
     const DownloadManager = {
         queue: [], activeDownloads: 0, token: null,
         initialize(token) { this.token = token; this.queue = []; this.activeDownloads = 0; },
-        schedule(card) { if (!card.dataset.path || this.queue.find(item => item.card === card)) return; this.queue.push({ card, priority: 9999 }); this.processQueue(); },
-        reprioritizeQueue() {
-            const viewportHeight = window.innerHeight;
-            const newQueue = [];
-            document.querySelectorAll('.gallery-card[data-path]').forEach(card => {
-                const rect = card.getBoundingClientRect();
-                if (rect.top < viewportHeight && rect.bottom > 0) newQueue.push({ card, priority: rect.top });
-            });
-            newQueue.sort((a, b) => a.priority - b.priority);
-            this.queue = newQueue; this.processQueue();
-        },
-        async processQueue() {
-            if (document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]')) return;
-            for (const item of this.queue) {
-                if (this.activeDownloads >= MAX_CONCURRENT_DOWNLOADS) break;
-                const card = item.card;
-                if (!card.dataset.path || card.dataset.loading === 'true') continue;
-                this.queue = this.queue.filter(i => i.card !== card);
-                this.loadImageForCard(card, card.dataset.path);
-            }
-        },
+        schedule(card) { if (!card.dataset.path || this.queue.some(item => item.card === card)) return; this.queue.push({ card, priority: 9999 }); this.processQueue(); },
+        reprioritizeQueue() { const vh = window.innerHeight; const nq = []; document.querySelectorAll('.gallery-card[data-path]').forEach(c => { const r = c.getBoundingClientRect(); if (r.top < vh && r.bottom > 0) nq.push({ card: c, priority: r.top }); }); nq.sort((a, b) => a.priority - b.priority); this.queue = nq; this.processQueue(); },
+        async processQueue() { if (document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]')) return; for (const item of this.queue) { if (this.activeDownloads >= MAX_CONCURRENT_DOWNLOADS) break; const card = item.card; if (!card.dataset.path || card.dataset.loading === 'true') continue; this.queue = this.queue.filter(i => i.card !== card); this.loadImageForCard(card, card.dataset.path); } },
         async loadImageForCard(card, path) {
             const { signal } = galleryState.controller; card.dataset.loading = 'true'; this.activeDownloads++;
             try {
-                const metaRes = await fetch(API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
-                if (!metaRes.ok) throw new Error(`API Get failed: ${metaRes.status}`);
-                const metaData = await metaRes.json();
-                const totalSize = metaData.data.size;
-                const isLargeFile = (totalSize / (1024 * 1024)) > LARGE_FILE_THRESHOLD_MB;
-                card.dataset.isLarge = isLargeFile;
+                if (!card.dataset.size) { // 只有在没有预加载尺寸时才获取
+                    const metaRes = await fetch(API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
+                    if (!metaRes.ok) throw new Error(`API Get failed: ${metaRes.status}`);
+                    const metaData = await metaRes.json();
+                    card.dataset.size = metaData.data.size;
+                }
+                const totalSize = parseInt(card.dataset.size, 10);
+                const isLargeFile = (totalSize / (1024 * 1024)) > LARGE_FILE_THRESHOLD_MB; card.dataset.isLarge = isLargeFile;
                 if (isLargeFile && this.activeDownloads > 1) { card.dataset.loading = 'false'; this.activeDownloads--; this.schedule(card); return; }
                 let lastError = null;
                 for (let attempt = 1; attempt <= LOAD_RETRY_COUNT + 1; attempt++) {
-                    try { await this.fetchAndStreamImage(card, path, totalSize); lastError = null; break; }
-                    catch (error) {
-                        lastError = error; if (error.name === 'AbortError') break;
-                        console.warn(`[Alist Gallery] Attempt ${attempt} failed for ${path}:`, error);
-                        if (attempt <= LOAD_RETRY_COUNT) await new Promise(resolve => setTimeout(resolve, 500 * attempt));
-                    }
+                    try { await this.fetchAndDecodeImage(card, path, totalSize); lastError = null; break; }
+                    catch (error) { lastError = error; if (error.name === 'AbortError') break; console.warn(`[Alist Gallery] Attempt ${attempt} failed for ${path}:`, error); if (attempt <= LOAD_RETRY_COUNT) await new Promise(resolve => setTimeout(resolve, 500 * attempt)); }
                 }
                 if (lastError) throw lastError;
                 card.removeAttribute('data-path');
             } catch (error) {
-                if (error.name !== 'AbortError') { console.error(`[Alist Gallery] Failed to load image for path ${path}.`, error); const placeholder = card.querySelector('.card-placeholder'); if(placeholder) placeholder.textContent = '加载失败'; }
-                else { console.log(`[Alist Gallery] Load cancelled for path ${path}.`); }
-            } finally {
-                const progressIndicator = card.querySelector('.progress-indicator'); if(progressIndicator) progressIndicator.classList.remove('visible');
-                card.dataset.loading = 'false'; this.activeDownloads--; this.processQueue();
-            }
+                if (error.name !== 'AbortError') { console.error(`[Alist Gallery] Failed for ${path}.`, error); const p = card.querySelector('.card-placeholder'); if(p) p.textContent = '加载失败'; }
+                else { console.log(`[Alist Gallery] Cancelled for ${path}.`); }
+            } finally { const p = card.querySelector('.progress-indicator'); if(p) p.classList.remove('visible'); card.dataset.loading = 'false'; this.activeDownloads--; this.processQueue(); }
         },
-        async fetchAndStreamImage(card, path, totalSize) {
-            const { signal } = galleryState.controller;
-            const progressIndicator = card.querySelector('.progress-indicator'), progressCircle = card.querySelector('.progress-circle-bar'), progressText = card.querySelector('.progress-text');
-            if (!progressIndicator || !progressCircle || !progressText) throw new Error("Progress indicator elements not found.");
-            const radius = progressCircle.r.baseVal.value;
-            const circumference = 2 * Math.PI * radius;
-            const updateProgress = (p) => { progressCircle.style.strokeDashoffset = circumference - (p/100)*circumference; progressText.textContent = `${Math.floor(p)}%`; };
-            progressCircle.style.strokeDasharray = `${circumference} ${circumference}`;
-            progressIndicator.classList.add('visible'); updateProgress(0);
-            const linkRes = await fetch(API_LINK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
-            if (!linkRes.ok) throw new Error(`API Link failed: ${linkRes.status}`);
-            const linkData = await linkRes.json(); const signedUrl = linkData?.data?.url; if (!signedUrl) throw new Error("Signed URL not found.");
-            const response = await fetch(signedUrl, { signal }); if (!response.body) throw new Error("Response body is not readable.");
-            const reader = response.body.getReader(); let loadedSize = 0, chunks = [];
-            while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); loadedSize += value.length; updateProgress((loadedSize / totalSize) * 100); }
-            const blob = new Blob(chunks); const objectURL = URL.createObjectURL(blob);
-            try { await this.performVisualLoad(card, objectURL, card.querySelector('.card-placeholder')); }
-            finally { URL.revokeObjectURL(objectURL); }
-        },
-        async performVisualLoad(card, url, placeholder) {
-            const tempImg = new Image(); tempImg.src = url;
-            await new Promise((res, rej) => { tempImg.onload = res; tempImg.onerror = rej; });
-            card.style.aspectRatio = tempImg.naturalWidth / tempImg.naturalHeight;
-            const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
-            canvas.width = 200; canvas.height = 200 / (tempImg.naturalWidth / tempImg.naturalHeight);
-            ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
-            const thumbBg = document.createElement('div'); thumbBg.className = 'thumbnail-bg';
-            thumbBg.style.backgroundImage = `url(${canvas.toDataURL('image/webp', 0.8)})`; card.prepend(thumbBg);
-            const imageWrapper = document.createElement('div'); imageWrapper.className = 'gallery-image-wrapper';
-            const finalImage = new Image(); finalImage.className = 'gallery-image'; imageWrapper.appendChild(finalImage); card.appendChild(imageWrapper);
-            finalImage.src = url;
-            // [v10.0] 解码容错
-            try {
-                if (finalImage.decode && typeof finalImage.decode === 'function') { await finalImage.decode(); }
-                else { await new Promise((res, rej) => { finalImage.onload = res; finalImage.onerror = rej; }); }
-            } catch(e) {
-                console.warn("[Alist Gallery] Image.decode() failed, falling back to onload. Error:", e);
-                if (!finalImage.naturalWidth) { await new Promise((res, rej) => { finalImage.onload = res; finalImage.onerror = rej; }); }
-            }
-            if (placeholder) { placeholder.style.opacity = '0'; placeholder.addEventListener('transitionend', () => placeholder.remove(), { once: true }); }
-            requestAnimationFrame(() => {
-                thumbBg.classList.add('reveal');
-                requestAnimationFrame(() => { finalImage.classList.add('loaded'); });
-            });
-        }
+        async fetchAndDecodeImage(card, path, totalSize) { /* ... (v12.2 逻辑不变) ... */ },
+        async performVisualLoad(card, blob) { /* ... (v12.2 逻辑不变) ... */ }
     };
-    function debounce(func, wait) { let timeout; return function(...args) { const later = () => { clearTimeout(timeout); func.apply(this, args); }; clearTimeout(timeout); timeout = setTimeout(later, wait); }; }
-    function scanForImages() {
-        const links = Array.from(document.querySelectorAll("a.list-item"));
-        const foundImages = links.map(link => {
-            const nameElement = link.querySelector("p.name"); if (!nameElement) return null;
-            const text = nameElement.textContent.trim();
-            const isImage = IMAGE_EXTENSIONS.some(ext => text.toLowerCase().endsWith(ext.toLowerCase()));
-            const rawPath = decodeURIComponent(new URL(link.href).pathname);
-            return isImage ? { name: text, path: rawPath } : null;
-        }).filter(Boolean);
-        const btn = document.getElementById(GALLERY_BUTTON_ID);
-        if (foundImages.length >= TRIGGER_IMAGE_COUNT) { imageList = foundImages; if (!btn) createGalleryTriggerButton(); }
-        else { imageList = []; if (btn) btn.remove(); }
-    }
-    function createGalleryTriggerButton() {
-        const button = document.createElement("button"); button.id = GALLERY_BUTTON_ID; button.title = "进入沉浸式图廊";
-        button.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
-        button.addEventListener("click", launchGallery); document.body.appendChild(button);
-    }
-    function launchGallery() {
+    // 为了简洁，将 v12.2 中未改变的函数体压缩
+    DownloadManager.fetchAndDecodeImage = async function(card, path, totalSize) { const { signal } = galleryState.controller; const p = card.querySelector('.progress-indicator'), c = p.querySelector('.progress-circle-bar'), t = p.querySelector('.progress-text'); if (!p || !c || !t) throw new Error("Progress elements not found."); const r = c.r.baseVal.value, cf = 2*Math.PI*r; const uP = (pr) => { c.style.strokeDashoffset = cf-(pr/100)*cf; t.textContent = `${Math.floor(pr)}%`; }; p.classList.add('visible'); uP(0); const lR = await fetch(API_LINK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal }); if (!lR.ok) throw new Error(`API Link failed: ${lR.status}`); const lD = await lR.json(); const sU = lD?.data?.url; if (!sU) throw new Error("Signed URL not found."); const rsp = await fetch(sU, { signal }); if (!rsp.body) throw new Error("Response body not readable."); const rdr = rsp.body.getReader(); let lS = 0, ch = []; while (true) { const { done, value } = await rdr.read(); if (done) break; ch.push(value); lS += value.length; uP((lS / totalSize) * 100); } const b = new Blob(ch); await this.performVisualLoad(card, b); };
+    DownloadManager.performVisualLoad = async function(card, blob) { let iB; try { if (typeof createImageBitmap !== 'undefined') { iB = await createImageBitmap(blob); } else { const oU = URL.createObjectURL(blob); try { const tI = new Image(); tI.src = oU; await tI.decode(); iB = tI; } finally { URL.revokeObjectURL(oU); }} } catch(e) { console.error("Image decoding failed:", e); throw e; } card.style.aspectRatio = iB.width / iB.height; const iW = document.createElement('div'); iW.className = 'gallery-image-wrapper'; const tC = document.createElement('canvas'); const tX = tC.getContext('2d'); tC.width = 50; tC.height = 50 / (iB.width / iB.height); tX.drawImage(iB, 0, 0, tC.width, tC.height); const bO = new Image(); bO.className = 'blur-overlay'; bO.src = tC.toDataURL('image/webp', 0.1); iW.appendChild(bO); const fI = document.createElement('canvas'); fI.className = 'gallery-image'; fI.width = iB.width; fI.height = iB.height; fI.getContext('2d').drawImage(iB, 0, 0); if (typeof iB.close === 'function') iB.close(); iW.appendChild(fI); card.appendChild(iW); animationObserver.observe(fI); };
+
+    async function launchGallery() {
         if (galleryState.isActive) return;
         galleryState.isActive = true; galleryState.lastScrollY = window.scrollY; galleryState.controller = new AbortController();
         document.body.classList.add('gallery-is-active');
-        const galleryContainer = document.createElement("div"); galleryContainer.id = GALLERY_CONTAINER_ID;
-        if (IS_MOBILE) galleryContainer.classList.add('mobile-mode'); // [v10.0] 应用移动模式
-        document.body.appendChild(galleryContainer);
-        galleryContainer.innerHTML = `<button class="gallery-back-btn" title="返回 (Esc)"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg></button><div class="gallery-toolbar"><button class="toolbar-btn active" data-mode="mode-standard" title="标准模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2" /></svg></button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12H2m4-4-4 4 4 4M18 8l4 4-4 4"/></svg></button></div><div class="gallery-image-list mode-standard"></div>`;
+        const galleryContainer = document.createElement("div"); galleryContainer.id = GALLERY_CONTAINER_ID; document.body.appendChild(galleryContainer);
+        galleryContainer.innerHTML = `<div class="gallery-scroll-container"><button class="gallery-back-btn" title="返回 (Esc)"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg></button><div class="gallery-toolbar">...</div><div class="gallery-image-list mode-standard"></div></div>`;
+        galleryContainer.querySelector('.gallery-toolbar').innerHTML = `<button class="toolbar-btn active" data-mode="mode-standard" title="标准模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2" /></svg></button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg></button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12H2m4-4-4 4 4 4M18 8l4 4-4 4"/></svg></button>`;
+
         const imageListContainer = galleryContainer.querySelector(".gallery-image-list");
+        if (imageList.length > METADATA_PRELOAD_THRESHOLD) {
+            const loader = document.createElement('div'); loader.className = 'gallery-global-loader'; loader.innerHTML = `<svg width="48" height="48" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25"/><path d="M10.72,19.9a8,8,0,0,1-6.5-9.79A7.77,7.77,0,0,1,10.4,4.16a8,8,0,0,1,9.49,6.52A1.54,1.54,0,0,0,21.38,12h.13a1.37,1.37,0,0,0,1.38-1.54,11,11,0,1,0-12.7,12.39A1.54,1.54,0,0,0,12,21.34h0A1.47,1.47,0,0,0,10.72,19.9Z"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.75s" repeatCount="indefinite"/></path></svg>`;
+            galleryContainer.appendChild(loader);
+            await preloadAllMetadata();
+            loader.remove();
+        }
+
         imageList.forEach(image => {
             const card = document.createElement("div"); card.className = "gallery-card"; card.dataset.path = image.path;
-            card.innerHTML = `<div class="card-placeholder"><div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div></div><div class="card-filename">${image.name}</div>`;
+            if (image.size) card.dataset.size = image.size;
+            if (image.aspectRatio) card.style.aspectRatio = image.aspectRatio;
+            card.innerHTML = `<div class="card-placeholder">...</div><div class="card-filename">${image.name}</div>`;
+            card.querySelector('.card-placeholder').innerHTML = `<div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div>`;
             imageListContainer.appendChild(card);
         });
         requestAnimationFrame(() => galleryContainer.classList.add("gallery-active"));
         setupEventListeners(); setupLazyLoading();
     }
-    function closeGallery() {
-        if (!galleryState.isActive) return;
-        if (galleryState.controller) galleryState.controller.abort();
-        DownloadManager.queue = []; galleryState.isActive = false;
-        const galleryContainer = document.getElementById(GALLERY_CONTAINER_ID);
-        if (galleryContainer) {
-            galleryContainer.classList.remove("gallery-active");
-            galleryContainer.addEventListener("transitionend", () => {
-                galleryContainer.remove(); document.body.classList.remove('gallery-is-active');
-                window.scrollTo(0, galleryState.lastScrollY);
-            }, { once: true });
-        }
-        document.removeEventListener("keydown", handleKeyPress);
-        if (intersectionObserver) { intersectionObserver.disconnect(); intersectionObserver = null; }
+    
+    async function preloadAllMetadata() {
+        const token = localStorage.getItem('token');
+        const promises = imageList.map(async (image) => {
+            try {
+                const res = await fetch(API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token }, body: JSON.stringify({ path: image.path }), signal: galleryState.controller.signal });
+                const data = await res.json();
+                image.size = data.data.size;
+                image.aspectRatio = data.data.width / data.data.height;
+            } catch (e) { console.warn(`Metadata preload failed for ${image.path}`); }
+        });
+        await Promise.all(promises);
     }
-    function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
+
     function setupEventListeners() {
         document.querySelector(".gallery-back-btn").addEventListener("click", closeGallery);
         document.addEventListener("keydown", handleKeyPress);
@@ -273,24 +178,63 @@
                 imageListContainer.classList.add(mode);
                 toolbar.querySelectorAll(".toolbar-btn").forEach(btn => btn.classList.remove("active"));
                 button.classList.add("active");
+                // [v13.0] 动态调整预加载
+                const scrollContainer = document.querySelector(".gallery-scroll-container");
+                setupLazyLoading(scrollContainer, mode === 'mode-webtoon' ? '300%' : '100%');
             });
         }
     }
-    function setupLazyLoading() {
+    
+    function setupLazyLoading(customRoot = null, rootMargin = '100%') {
         const token = localStorage.getItem('token'); if (!token) { console.warn('[Alist Gallery] Token not found.'); return; }
         DownloadManager.initialize(token);
-        const galleryContainer = document.getElementById(GALLERY_CONTAINER_ID);
-        const debouncedReprioritize = debounce(() => DownloadManager.reprioritizeQueue(), 150);
-        galleryContainer.addEventListener('scroll', debouncedReprioritize);
-        intersectionObserver = new IntersectionObserver((entries) => {
+        const scrollContainer = customRoot || document.querySelector(".gallery-scroll-container");
+        if (!scrollContainer.scrollListener) {
+            const debouncedReprioritize = debounce(() => DownloadManager.reprioritizeQueue(), 150);
+            scrollContainer.addEventListener('scroll', debouncedReprioritize);
+            scrollContainer.scrollListener = true;
+        }
+
+        if (loadObserver) loadObserver.disconnect();
+        if (animationObserver) animationObserver.disconnect();
+
+        loadObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => { if (entry.isIntersecting) { entry.target.classList.add('is-visible'); DownloadManager.schedule(entry.target); loadObserver.unobserve(entry.target); } });
+        }, { root: scrollContainer, rootMargin: rootMargin });
+        animationObserver = new IntersectionObserver((entries, observer) => {
             entries.forEach(entry => {
-                if (entry.isIntersecting) { entry.target.classList.add('is-visible'); DownloadManager.schedule(entry.target); }
+                if (entry.isIntersecting) {
+                    const imageEl = entry.target;
+                    const blurOverlay = imageEl.previousElementSibling;
+                    const placeholder = imageEl.closest('.gallery-card')?.querySelector('.card-placeholder');
+                    if (placeholder) placeholder.style.opacity = '0';
+                    imageEl.classList.add('is-animating');
+                    if (blurOverlay?.classList.contains('blur-overlay')) { blurOverlay.classList.add('is-animating'); }
+                    observer.unobserve(imageEl);
+                }
             });
-        }, { root: galleryContainer, rootMargin: '100% 0px', threshold: 0.01 });
-        document.querySelectorAll('.gallery-card').forEach(card => intersectionObserver.observe(card));
+        }, { root: scrollContainer, rootMargin: '0px' });
+        
+        document.querySelectorAll('.gallery-card[data-path]').forEach(card => loadObserver.observe(card));
         setTimeout(() => DownloadManager.reprioritizeQueue(), 100);
     }
-    const observer = new MutationObserver(() => { setTimeout(() => { if (document.querySelector('.list.viselect-container')) { scanForImages(); } else { const btn = document.getElementById(GALLERY_BUTTON_ID); if (btn) btn.remove(); } }, 500); });
+    
+    function debounce(func, wait) { let t; return function(...a) { clearTimeout(t); t = setTimeout(() => func.apply(this, a), wait); }; }
+    function closeGallery() { if (!galleryState.isActive) return; if (galleryState.controller) galleryState.controller.abort(); DownloadManager.queue = []; galleryState.isActive = false; const gc = document.getElementById(GALLERY_CONTAINER_ID); if (gc) { gc.classList.remove("gallery-active"); gc.addEventListener("transitionend", () => { gc.remove(); document.body.classList.remove('gallery-is-active'); window.scrollTo(0, galleryState.lastScrollY); }, { once: true }); } document.removeEventListener("keydown", handleKeyPress); if (loadObserver) loadObserver.disconnect(); if (animationObserver) animationObserver.disconnect(); }
+    function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
+    function scanForImages() {
+        const links = Array.from(document.querySelectorAll("a.list-item:not([data-type='file']), a.grid-item:not([data-type='file'])"));
+        const foundImages = links.map(link => {
+            const nameEl = link.querySelector("p.name"); if (!nameEl) return null;
+            const text = nameEl.textContent.trim(); const isImage = IMAGE_EXTENSIONS.some(ext => text.toLowerCase().endsWith(ext.toLowerCase()));
+            const rawPath = decodeURIComponent(new URL(link.href).pathname);
+            return isImage ? { name: text, path: rawPath } : null;
+        }).filter(Boolean);
+        if (foundImages.length >= TRIGGER_IMAGE_COUNT) { imageList = foundImages; ToolbarManager.injectButton(); }
+        else { imageList = []; ToolbarManager.removeButton(); }
+    }
+
+    const observer = new MutationObserver(debounce(scanForImages, 300));
     const rootObserver = new MutationObserver((_, obs) => { const mainContentArea = document.querySelector(".obj-box"); if (mainContentArea) { observer.observe(mainContentArea, { childList: true, subtree: true }); scanForImages(); obs.disconnect(); } });
     rootObserver.observe(document.body, { childList: true, subtree: true });
 
