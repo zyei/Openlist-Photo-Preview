@@ -167,13 +167,46 @@
     preloadAllMetadata = async function() { const token=localStorage.getItem('token'); const CONCURRENT_LIMIT=5; let promises=[]; let executing=[]; for(const image of imageList){const p=(async()=>{try{const res=await fetch(API_GET_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',Authorization:token},body:JSON.stringify({path:image.path}),signal:galleryState.controller.signal}); const data=await res.json(); image.size=data.data.size; image.aspectRatio=data.data.width&&data.data.height?data.data.width/data.data.height:null;}catch(e){console.warn(`Metadata preload failed for ${image.path}`); image.aspectRatio=null;}})(); promises.push(p); if(CONCURRENT_LIMIT<=imageList.length){const e=p.finally(()=>executing.splice(executing.indexOf(e),1)); executing.push(e); if(executing.length>=CONCURRENT_LIMIT){await Promise.race(executing);}}} await Promise.all(promises); };
 
     function setupEventListeners() {
-        const container = document.getElementById(GALLERY_CONTAINER_ID); if (!container) return;
-        container.querySelector(".gallery-back-btn").addEventListener("click", closeGallery);
+        const container = document.getElementById(GALLERY_CONTAINER_ID);
+        if (!container) return;
+        const backBtn = container.querySelector(".gallery-back-btn");
+        const toolbar = container.querySelector(".gallery-toolbar");
+        const fsBtn = container.querySelector("#gallery-fullscreen-btn");
+        const imageListContainer = container.querySelector(".gallery-image-list");
+        const scrollContainer = container.querySelector('.gallery-scroll-container');
+        
+        let hideControlsTimeout = null;
+
+        const showControls = () => {
+            backBtn.classList.add('controls-visible');
+            toolbar.classList.add('controls-visible');
+            clearTimeout(hideControlsTimeout);
+            hideControlsTimeout = setTimeout(() => {
+                backBtn.classList.remove('controls-visible');
+                toolbar.classList.remove('controls-visible');
+            }, 2000); // 2秒后自动隐藏
+        };
+
+        // 初始显示一次
+        showControls();
+
+        // 滚动时显示
+        scrollContainer.addEventListener('scroll', showControls, { passive: true });
+        
+        // 返回按钮
+        backBtn.addEventListener("click", closeGallery);
+        
+        // 全局按键
         document.addEventListener("keydown", handleKeyPress);
-        const toolbar = container.querySelector(".gallery-toolbar"), imageListContainer = container.querySelector(".gallery-image-list");
+        
+        // 全屏按钮
+        fsBtn.addEventListener("click", toggleFullscreen);
+        document.addEventListener('fullscreenchange', updateFullscreenIcons);
+
+        // 模式切换
         if (toolbar && imageListContainer) {
             toolbar.addEventListener("click", e => {
-                const button = e.target.closest(".toolbar-btn"); if (!button) return;
+                const button = e.target.closest(".toolbar-btn"); if (!button || button.id === 'gallery-fullscreen-btn') return;
                 const mode = button.dataset.mode;
                 ["mode-standard", "mode-webtoon", "mode-full-width"].forEach(m => imageListContainer.classList.remove(m));
                 imageListContainer.classList.add(mode);
@@ -183,6 +216,31 @@
             });
         }
         setupLazyLoading(false); // Initial setup
+    }
+
+    function toggleFullscreen() {
+        const galleryContainer = document.getElementById(GALLERY_CONTAINER_ID);
+        if (!document.fullscreenElement) {
+            galleryContainer?.requestFullscreen().catch(err => {
+                alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    }
+
+    function updateFullscreenIcons() {
+        const enterIcon = document.querySelector("#gallery-fullscreen-btn .enter-fullscreen-icon");
+        const exitIcon = document.querySelector("#gallery-fullscreen-btn .exit-fullscreen-icon");
+        if (!enterIcon || !exitIcon) return;
+
+        if (document.fullscreenElement) {
+            enterIcon.style.display = 'none';
+            exitIcon.style.display = 'block';
+        } else {
+            enterIcon.style.display = 'block';
+            exitIcon.style.display = 'none';
+        }
     }
     
     function setupLazyLoading(isResuming = false, rootMargin = '100%') {
@@ -263,8 +321,43 @@
     }
     
     function debounce(func, wait) { let t; return function(...a) { clearTimeout(t); t = setTimeout(() => func.apply(this, a), wait); }; }
-    function closeGallery() { if (!galleryState.isActive) return; if (galleryState.controller) galleryState.controller.abort(); DownloadManager.queue = []; galleryState.isActive = false; const gc = document.getElementById(GALLERY_CONTAINER_ID); if (gc) { gc.classList.remove("gallery-active"); gc.addEventListener("transitionend", () => { gc.remove(); document.body.classList.remove('gallery-is-active'); window.scrollTo(0, galleryState.lastScrollY); }, { once: true }); } document.removeEventListener("keydown", handleKeyPress); if (loadObserver) loadObserver.disconnect(); if (animationObserver) animationObserver.disconnect(); }
-    function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
+    function closeGallery() {
+        if (!galleryState.isActive) return;
+        if (galleryState.controller) galleryState.controller.abort();
+        
+        // 退出可能的全屏模式
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        }
+
+        DownloadManager.queue = [];
+        galleryState.isActive = false;
+        const gc = document.getElementById(GALLERY_CONTAINER_ID);
+        if (gc) {
+            gc.classList.remove("gallery-active");
+            gc.addEventListener("transitionend", () => {
+                gc.remove();
+                document.body.classList.remove('gallery-is-active');
+                window.scrollTo(0, galleryState.lastScrollY);
+            }, { once: true });
+        }
+        
+        document.removeEventListener("keydown", handleKeyPress);
+        document.removeEventListener('fullscreenchange', updateFullscreenIcons); // [v16.1] 清理事件
+        
+        if (loadObserver) loadObserver.disconnect();
+        if (animationObserver) animationObserver.disconnect();
+    }
+    function handleKeyPress(e) {
+        if (e.key === "Escape" && !document.fullscreenElement) {
+            closeGallery();
+        }
+        // [v16.1] 新增F键全屏
+        if (e.key.toLowerCase() === "f") {
+            e.preventDefault();
+            toggleFullscreen();
+        }
+    }
     function scanForImages() {
         const links = Array.from(document.querySelectorAll("a.list-item, a.grid-item")).filter(el => { const p = el.querySelector('p.name'); return p && !p.textContent.includes('/'); });
         const foundImages = links.map(link => { const nameEl = link.querySelector("p.name"); if (!nameEl) return null; const text = nameEl.textContent.trim(); const isImage = IMAGE_EXTENSIONS.some(ext => text.toLowerCase().endsWith(ext.toLowerCase())); const rawPath = decodeURIComponent(new URL(link.href).pathname); return isImage ? { name: text, path: rawPath } : null; }).filter(Boolean);
