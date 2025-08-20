@@ -90,20 +90,36 @@
     const TEMPLATES = {
         PLACEHOLDER: `<div class="card-placeholder"><div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div></div>`,
     };
-
+    
     const ToolbarManager = {
+        iconSVG: `<path fill="currentColor" d="M4 4h7L9 2L4 2c-1.1 0-2 .9-2 2v7l2-2V4zm16 0h-7l2-2h5c1.1 0 2 .9 2 2v5l-2-2V4zM4 20h7l-2 2H4c-1.1 0-2-.9-2-2v-5l2 2v5zm16 0h-7l2 2h5c1.1 0 2-.9 2-2v-5l-2 2v5z"></path>`,
+        
         injectButton() {
             if (document.getElementById(GALLERY_BUTTON_ID)) return;
+            
             const toolbar = document.querySelector('.left-toolbar-in');
-            const refreshButton = toolbar?.querySelector('svg[tips="refresh"]');
-            if (!toolbar || !refreshButton) return;
-            const newButton = refreshButton.cloneNode(true);
+            // [v17.1 FIX] 使用更通用的选择器，克隆第一个找到的图标
+            const referenceButton = toolbar?.querySelector('.hope-icon');
+            
+            if (!toolbar || !referenceButton) {
+                // 如果工具栏或图标不存在，稍后重试
+                setTimeout(() => this.injectButton(), 200);
+                return;
+            }
+
+            const newButton = referenceButton.cloneNode(true);
             newButton.id = GALLERY_BUTTON_ID;
-            newButton.setAttribute('tips', '沉浸式图廊');
-            newButton.innerHTML = ICONS.GALLERY;
-            newButton.addEventListener('click', launchGallery);
-            toolbar.prepend(newButton);
+            newButton.setAttribute('tips', '沉浸式图廊 (Immersive Gallery)');
+            newButton.innerHTML = this.iconSVG;
+            
+            // 移除可能存在的旧监听器（克隆节点可能会带来）
+            const cleanButton = newButton.cloneNode(true);
+            newButton.parentNode?.replaceChild(cleanButton, newButton);
+
+            cleanButton.addEventListener('click', launchGallery);
+            toolbar.prepend(cleanButton);
         },
+        
         removeButton() {
             document.getElementById(GALLERY_BUTTON_ID)?.remove();
         }
