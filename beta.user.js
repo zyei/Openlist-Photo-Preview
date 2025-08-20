@@ -75,7 +75,7 @@
         .gallery-global-loader { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10002; color: #8ec5fc; }
     `);
 
-    // [v17.0] 模块化与代码清理
+    // [v17.1] 模块化与代码清理
     const ICONS = {
         GALLERY: `<path fill="currentColor" d="M4 4h7L9 2L4 2c-1.1 0-2 .9-2 2v7l2-2V4zm16 0h-7l2-2h5c1.1 0 2 .9 2 2v5l-2-2V4zM4 20h7l-2 2H4c-1.1 0-2-.9-2-2v-5l2 2v5zm16 0h-7l2 2h5c1.1 0 2-.9 2-2v-5l-2 2v5z"></path>`,
         BACK: `<line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline>`,
@@ -90,36 +90,23 @@
     const TEMPLATES = {
         PLACEHOLDER: `<div class="card-placeholder"><div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div></div>`,
     };
-    
+
+    // [v17.1 FIX] 将 debounce 函数定义移到使用前
+    function debounce(func, wait) { let t; return function(...a) { clearTimeout(t); t = setTimeout(() => func.apply(this, a), wait); }; }
+
     const ToolbarManager = {
-        iconSVG: `<path fill="currentColor" d="M4 4h7L9 2L4 2c-1.1 0-2 .9-2 2v7l2-2V4zm16 0h-7l2-2h5c1.1 0 2 .9 2 2v5l-2-2V4zM4 20h7l-2 2H4c-1.1 0-2-.9-2-2v-5l2 2v5zm16 0h-7l2 2h5c1.1 0 2-.9 2-2v-5l-2 2v5z"></path>`,
-        
         injectButton() {
             if (document.getElementById(GALLERY_BUTTON_ID)) return;
-            
             const toolbar = document.querySelector('.left-toolbar-in');
-            // [v17.1 FIX] 使用更通用的选择器，克隆第一个找到的图标
-            const referenceButton = toolbar?.querySelector('.hope-icon');
-            
-            if (!toolbar || !referenceButton) {
-                // 如果工具栏或图标不存在，稍后重试
-                setTimeout(() => this.injectButton(), 200);
-                return;
-            }
-
-            const newButton = referenceButton.cloneNode(true);
+            const refreshButton = toolbar?.querySelector('svg[tips="refresh"]');
+            if (!toolbar || !refreshButton) return;
+            const newButton = refreshButton.cloneNode(true);
             newButton.id = GALLERY_BUTTON_ID;
-            newButton.setAttribute('tips', '沉浸式图廊 (Immersive Gallery)');
-            newButton.innerHTML = this.iconSVG;
-            
-            // 移除可能存在的旧监听器（克隆节点可能会带来）
-            const cleanButton = newButton.cloneNode(true);
-            newButton.parentNode?.replaceChild(cleanButton, newButton);
-
-            cleanButton.addEventListener('click', launchGallery);
-            toolbar.prepend(cleanButton);
+            newButton.setAttribute('tips', '沉浸式图廊');
+            newButton.innerHTML = ICONS.GALLERY;
+            newButton.addEventListener('click', launchGallery);
+            toolbar.prepend(newButton);
         },
-        
         removeButton() {
             document.getElementById(GALLERY_BUTTON_ID)?.remove();
         }
@@ -128,13 +115,28 @@
     const DownloadManager = {
         queue: [], activeDownloads: 0, token: null,
         initialize(token) { this.token = token; this.queue = []; this.activeDownloads = 0; },
-        schedule(card) { if (!card.dataset.path || this.queue.some(item => item.card === card)) return; this.queue.push({ card, priority: 9999 }); this.processQueue(); },
-        reprioritizeQueue() { const vh = window.innerHeight; const nq = []; document.querySelectorAll('.gallery-card[data-path]').forEach(c => { const r = c.getBoundingClientRect(); if (r.top < vh && r.bottom > 0) nq.push({card:c, priority:r.top}); }); nq.sort((a,b)=>a.priority-b.priority); this.queue = nq; this.processQueue(); },
+        schedule(card) {
+            if (!card.dataset.path || this.queue.some(item => item.card === card)) return;
+            this.queue.push({ card, priority: 9999 });
+            this.processQueue();
+        },
+        reprioritizeQueue() {
+            const vh = window.innerHeight;
+            const nq = [];
+            document.querySelectorAll('.gallery-card[data-path]').forEach(c => {
+                const r = c.getBoundingClientRect();
+                if (r.top < vh && r.bottom > 0) nq.push({card: c, priority: r.top});
+            });
+            nq.sort((a,b) => a.priority - b.priority);
+            this.queue = nq;
+            this.processQueue();
+        },
         async processQueue() {
             if (document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]')) return;
             for (const item of this.queue) {
                 if (this.activeDownloads >= MAX_CONCURRENT_DOWNLOADS) break;
-                const card = item.card; if (!card.dataset.path || card.dataset.loading === 'true') continue;
+                const card = item.card;
+                if (!card.dataset.path || card.dataset.loading === 'true') continue;
                 this.queue = this.queue.filter(i => i.card !== card);
                 this.loadImageForCard(card, card.dataset.path);
             }
@@ -196,7 +198,6 @@
             const progressCircle = progressIndicator?.querySelector('.progress-circle-bar');
             const progressText = progressIndicator?.querySelector('.progress-text');
             if (!progressIndicator || !progressCircle || !progressText) throw new Error("Progress elements not found.");
-
             const radius = progressCircle.r.baseVal.value;
             const circumference = 2 * Math.PI * radius;
             const updateProgress = (percent) => {
@@ -205,13 +206,11 @@
             };
             progressIndicator.classList.add('visible');
             updateProgress(0);
-
             const linkRes = await fetch(API_LINK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
             if (!linkRes.ok) throw new Error(`API Link failed: ${linkRes.status}`);
             const linkData = await linkRes.json();
             const signedUrl = linkData?.data?.url;
             if (!signedUrl) throw new Error("Signed URL not found.");
-
             const response = await fetch(signedUrl, { signal });
             if (!response.body) throw new Error("Response body not readable.");
             const reader = response.body.getReader();
@@ -247,11 +246,9 @@
                 console.error("Image decoding/bitmap creation failed:", e);
                 throw e;
             }
-
             card.style.aspectRatio = imageBitmap.width / imageBitmap.height;
             const imageWrapper = document.createElement('div');
             imageWrapper.className = 'gallery-image-wrapper';
-
             const thumbCanvas = document.createElement('canvas');
             const thumbCtx = thumbCanvas.getContext('2d');
             thumbCanvas.width = 50;
@@ -261,7 +258,6 @@
             blurOverlay.className = 'blur-overlay';
             blurOverlay.src = thumbCanvas.toDataURL('image/webp', 0.1);
             imageWrapper.appendChild(blurOverlay);
-
             const finalImage = document.createElement('canvas');
             finalImage.className = 'gallery-image';
             finalImage.width = imageBitmap.width;
