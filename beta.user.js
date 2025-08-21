@@ -1,60 +1,360 @@
 // ==UserScript==
-// @name         Alist 沉浸式图廊 (Immersive Gallery) v20.1 Sanctum
+// @name         Alist 沉浸式图廊 (Immersive Gallery) v20.2 Legacy
 // @namespace    http://tampermonkey.net/
-// @version      20.1
-// @description  v20.1 "Sanctum" - The perfected final version. This release fixes all identified UI and interaction bugs, including a flawless zone-based UI toggle for all modes, and resolves the final critical ReferenceError, culminating our journey in a state of perfect execution.
+// @version      20.2
+// @description  v20.2 "Legacy" - The final, perfected masterpiece. This version ensures flawless automatic fullscreen entry and provides a fully optimized touch experience for the progress bar on mobile devices, culminating our journey in a state of ultimate refinement and usability.
 // @author       Your Name & AI
 // @license      MIT
 // @include      /^https?://127\.0\.0\.1:5244/.*$/
-// @include      /^https?://192\.168\.\d{1,3}\.\d{1,3}:5244/.*$/
+// @include      /^https?://192\.168\.\d{1,3}\d{1,3}:5244/.*$/
 // @icon         data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgdmlld0JveD0iMCAwIDI0IDI0Ij48cGF0aCBmaWxsPSIjOGFjNmZmIiBkPSJNMjIgMTZWNGEyIDIgMCAwIDAtMi0ySDhNMyA2djEyYTIgMiAwIDAgMCAyIDJoMTJhMiAyIDAgMCAwIDItMlY4bC04LTRINWExIDEgMCAwIDEgMC0yaDEwVjRoNFYybC00IDRIM2EyIDIgMCAwIDAtMiAydjE4YTIgMiAwIDAgMCAyIDJoMTRhMiAyIDAgMCAwIDItMlY2aC0ydjEwaC04bC0yLTItMiAySDV2LTRoN2wtMy0zSDVhMSAxIDAgMCAxIDAtMmgzLjE3MmwzIDNIMTlWNkwzIDZtMi0yaDEwbDMgM0g1YTEgMSAwIDAgMSAwLTJtNSA5YTEuMSAxLjUgMCAxIDEgMC0zYTEuNSAxLjUgMCAwIDEgMCAzWiIvPjwvc3ZnPg==
 // @grant        GM_addStyle
 // ==/UserScript==
 
 (function() {
     'use strict';
-    const IMAGE_EXTENSIONS=['.jpg','.jpeg','.png','.gif','.bmp','.webp','avif','.svg','.JPG','.jxl','.JXL'];
-    const TRIGGER_IMAGE_COUNT=5;
-    const GALLERY_BUTTON_ID='integrated-gallery-trigger-btn';
-    const GALLERY_CONTAINER_ID='immersive-gallery-container';
-    const API_LINK_ENDPOINT='/api/fs/link';
-    const API_GET_ENDPOINT='/api/fs/get';
-    const LARGE_FILE_THRESHOLD_MB=15;
-    const MAX_CONCURRENT_DOWNLOADS=3;
-    const LOAD_RETRY_COUNT=2;
-    let imageList=[],loadObserver=null,animationObserver=null;
-    let galleryState={isActive:false,lastScrollY:0,controller:null,reprioritizeTimer:null,hideControlsTimeout:null,scrollHandler:null,clickHandler:null,progressScrollHandler:null};
-    GM_addStyle(`:root{--ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);}body.gallery-is-active{overflow:hidden;}body.gallery-is-active > #root{position:fixed;top:0;left:0;width:100%;height:100%;overflow:hidden;pointer-events:none;}#${GALLERY_CONTAINER_ID}{position:fixed;top:0;left:0;width:100%;height:100%;z-index:9999;overflow:hidden;opacity:0;transition:opacity .5s ease-in-out;background-color:#f0f2f5;}html[data-theme="dark"] #${GALLERY_CONTAINER_ID}{background-color:#1a202c;}#${GALLERY_CONTAINER_ID} .gallery-scroll-container{width:100%;height:100%;overflow-y:auto;scroll-behavior:smooth;}#${GALLERY_CONTAINER_ID}::before, #${GALLERY_CONTAINER_ID}::after{content:'';position:absolute;top:0;left:0;width:100%;height:100%;z-index:-2;pointer-events:none;background-repeat:no-repeat;transform-origin:center center;}#${GALLERY_CONTAINER_ID}::before{background:radial-gradient(circle at 10% 10%, rgba(220, 210, 255, 0.6), transparent 50%);animation:shimmer1 30s ease-in-out infinite alternate;}#${GALLERY_CONTAINER_ID}::after{background:radial-gradient(circle at 90% 90%, rgba(210, 255, 245, 0.6), transparent 50%);animation:shimmer2 25s ease-in-out infinite alternate;}@keyframes shimmer1{from{transform:translate(-15%, -15%) scale(1.5);}to{transform:translate(15%, 15%) scale(1.5);}}@keyframes shimmer2{from{transform:translate(15%, 15%) scale(1.5);}to{transform:translate(-15%, -15%) scale(1.5);}}#${GALLERY_CONTAINER_ID}.gallery-active{opacity:1;}.gallery-back-btn, .gallery-toolbar, .gallery-progress-bar{transition:opacity .4s var(--ease-out-quart), visibility .4s var(--ease-out-quart), transform .4s var(--ease-out-quart) !important;z-index:10001;}.gallery-back-btn, .gallery-toolbar{opacity:0;visibility:hidden;transform:translateY(-20px);}.gallery-progress-bar{opacity:0;visibility:hidden;transform:translateY(20px);}.gallery-back-btn.visible, .gallery-toolbar.visible, .gallery-progress-bar.visible{opacity:1;visibility:visible;transform:translateY(0);}.gallery-back-btn{position:fixed;top:20px;left:20px;width:44px;height:44px;border-radius:50%;display:flex;justify-content:center;align-items:center;cursor:pointer;background:rgba(255,255,255,.5);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid rgba(0,0,0,.08);color:#333;}.gallery-back-btn:hover{background:rgba(255,255,255,.7);transform:scale(1.1) translateY(0) !important}.gallery-toolbar{position:fixed;top:20px;right:20px;display:flex;gap:10px;padding:8px;border-radius:22px;background:rgba(255,255,255,.5);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid rgba(0,0,0,.08);color:#333;}.toolbar-btn{width:36px;height:36px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s, color .2s}.toolbar-btn:hover{background:rgba(0,0,0,.05)}.toolbar-btn.active{background:#8ec5fc;color:#fff !important}.gallery-image-list{display:flex;flex-direction:column;align-items:center;gap:40px;padding:10vh 0;}.gallery-card{width:90%;border-radius:16px;box-shadow:0 25px 50px -12px rgba(0,0,0,.25);overflow:hidden;position:relative;background-color:rgba(255,255,255,.1);opacity:0;transform:translateY(20px);will-change:opacity, transform;transition:opacity .8s var(--ease-out-quart), transform .8s var(--ease-out-quart), aspect-ratio .4s ease-out;aspect-ratio:3 / 4;min-height:200px;}.gallery-card.is-visible{opacity:1;transform:translateY(0);}.card-placeholder{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;justify-content:center;align-items:center;background-color:rgba(255,255,255,.2);transition:opacity 1.2s var(--ease-out-quart);}html[data-theme="dark"] .card-placeholder{background-color:rgba(0,0,0,.1);}.gallery-image-wrapper{position:absolute;top:0;left:0;width:100%;height:100%;}.gallery-image{display:block;width:100%;height:100%;object-fit:contain;opacity:0;will-change:opacity;transition:opacity 1.2s var(--ease-out-quart);}.gallery-image.loaded{opacity:1;}.progress-indicator{position:absolute;width:80px;height:80px;display:flex;justify-content:center;align-items:center;opacity:0;transform:scale(.8);transition:all .3s ease;pointer-events:none;z-index:5;}.progress-indicator.visible{opacity:1;transform:scale(1);}.progress-indicator svg{transform:rotate(-90deg);}.progress-circle-bg{fill:none;stroke:rgba(0,0,0,.1);}.progress-circle-bar{fill:none;stroke:#8ec5fc;stroke-linecap:round;transition:stroke-dashoffset .2s linear;}.progress-text{position:absolute;font-size:16px;font-weight:500;color:rgba(0,0,0,.6);font-family:monospace;}.gallery-image-list.mode-standard .gallery-card{max-width:1000px;}.gallery-image-list.mode-webtoon{gap:0;}.gallery-image-list.mode-webtoon .gallery-card{width:100%;max-width:100%;border-radius:0;box-shadow:none;background:transparent;}.gallery-image-list.mode-webtoon .gallery-image{object-fit:cover;}.gallery-image-list.mode-webtoon .card-filename{display:none;}.gallery-image-list.mode-full-width .gallery-card{width:95vw;max-width:95vw;}.card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px black;z-index:4;}.gallery-card:hover .card-filename{opacity:1;}#${GALLERY_BUTTON_ID}{color:#526781;}html[data-theme="dark"] #${GALLERY_BUTTON_ID}{color:#a1aab9;}.gallery-global-loader{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10002;color:#8ec5fc;}.gallery-progress-bar{position:fixed;bottom:0;left:0;width:100%;height:40px;display:flex;align-items:center;padding:0 20px;box-sizing:border-box;background:linear-gradient(to top, rgba(0,0,0,0.3), transparent);}.progress-track{flex-grow:1;height:4px;background-color:rgba(255,255,255,.3);border-radius:2px;position:relative;cursor:pointer;}.progress-thumb{position:absolute;top:-5px;height:14px;width:14px;background-color:#fff;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,.2);transform:translateX(-50%);}.progress-label{color:#fff;text-shadow:0 1px 2px black;font-size:14px;margin-left:15px;font-variant-numeric:tabular-nums;}`);
-    const ICONS={GALLERY:`<path fill="currentColor" d="M4 4h7L9 2L4 2c-1.1 0-2 .9-2 2v7l2-2V4zm16 0h-7l2-2h5c1.1 0 2 .9 2 2v5l-2-2V4zM4 20h7l-2 2H4c-1.1 0-2-.9-2-2v-5l2 2v5zm16 0h-7l2 2h5c1.1 0 2-.9 2-2v-5l-2 2v5z"></path>`,BACK:`<line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline>`,STANDARD_MODE:`<rect x="2" y="3" width="20" height="18" rx="2"></rect>`,WEBTOON_MODE:`<line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>`,FULLWIDTH_MODE:`<path d="M22 12H2m4-4-4 4 4 4M18 8l4 4-4 4"></path>`,LOADER:`<path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25"></path><path d="M10.72,19.9a8,8,0,0,1-6.5-9.79A7.77,7.77,0,0,1,10.4,4.16a8,8,0,0,1,9.49,6.52A1.54,1.54,0,0,0,21.38,12h.13a1.37,1.37,0,0,0,1.38-1.54,11,11,0,1,0-12.7,12.39A1.54,1.54,0,0,0,12,21.34h0A1.47,1.47,0,0,0,10.72,19.9Z"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.75s" repeatCount="indefinite"></animateTransform></path>`,};
-    const TEMPLATES={PLACEHOLDER:`<div class="card-placeholder"><div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div></div>`,};
-    const ToolbarManager={injectButton(){if(document.getElementById(GALLERY_BUTTON_ID))return;const t=document.querySelector('.left-toolbar-in'),r=t?.querySelector('svg[tips="refresh"]');if(!t||!r)return;const n=r.cloneNode(true);n.id=GALLERY_BUTTON_ID;n.setAttribute('tips','沉浸式图廊');n.innerHTML=ICONS.GALLERY;n.addEventListener('click',launchGallery);t.prepend(n);},removeButton(){document.getElementById(GALLERY_BUTTON_ID)?.remove();}};
-    const DownloadManager={queue:[],activeDownloads:0,token:null,initialize(t){this.token=t;this.queue=[];this.activeDownloads=0;},schedule(c){if(!c.dataset.path||this.queue.some(i=>i.card===c))return;this.queue.push({card:c,priority:9999});this.processQueue();},reprioritizeQueue(){const v=window.innerHeight;const n=[];document.querySelectorAll('.gallery-card[data-path]').forEach(c=>{const r=c.getBoundingClientRect();if(r.top<v&&r.bottom>0)n.push({card:c,priority:r.top});});n.sort((a,b)=>a.priority-b.priority);this.queue=n;this.processQueue();},async processQueue(){if(document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]'))return;for(const i of this.queue){if(this.activeDownloads>=MAX_CONCURRENT_DOWNLOADS)break;const c=i.card;if(!c.dataset.path||c.dataset.loading==='true')continue;this.queue=this.queue.filter(t=>t.card!==c);this.loadImageForCard(c,c.dataset.path);}},async loadImageForCard(c,p){const{signal}=galleryState.controller;c.dataset.loading='true';this.activeDownloads++;try{if(!c.dataset.size){const m=await fetch(API_GET_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',Authorization:this.token},body:JSON.stringify({path:p}),signal});if(!m.ok)throw new Error(`API Get failed: ${m.status}`);const d=await m.json();c.dataset.size=d.data.size;}
-    const tS=parseInt(c.dataset.size,10);const iL=(tS/(1024*1024))>LARGE_FILE_THRESHOLD_MB;c.dataset.isLarge=iL;if(iL&&this.activeDownloads>1){c.dataset.loading='false';this.activeDownloads--;this.schedule(c);return;}
-    let lE=null;for(let a=1;a<=LOAD_RETRY_COUNT+1;a++){try{await this.fetchAndDecodeImage(c,p,tS);lE=null;break;}catch(e){lE=e;if(e.name==='AbortError')break;console.warn(`[Alist Gallery] Attempt ${a} failed for ${p}:`,e);if(a<=LOAD_RETRY_COUNT)await new Promise(r=>setTimeout(r,500*a));}}
-    if(lE)throw lE;c.removeAttribute('data-path');}catch(e){if(e.name!=='AbortError'){console.error(`[Alist Gallery] Failed for ${p}.`,e);const d=c.querySelector('.card-placeholder');if(d)d.textContent='加载失败';}else{}}finally{const d=c.querySelector('.progress-indicator');if(d)d.classList.remove('visible');c.dataset.loading='false';this.activeDownloads--;this.processQueue();}},async fetchAndDecodeImage(c,p,tS){const{signal}=galleryState.controller;const d=c.querySelector('.progress-indicator'),o=d.querySelector('.progress-circle-bar'),t=d.querySelector('.progress-text');if(!d||!o||!t)throw new Error("Progress elements not found.");const r=o.r.baseVal.value,f=2*Math.PI*r;const uP=p=>{o.style.strokeDashoffset=f-(p/100)*f;t.textContent=`${Math.floor(p)}%`;};d.classList.add('visible');uP(0);const lR=await fetch(API_LINK_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',Authorization:this.token},body:JSON.stringify({path:p}),signal});if(!lR.ok)throw new Error(`API Link failed: ${lR.status}`);const lD=await lR.json();const sU=lD?.data?.url;if(!sU)throw new Error("Signed URL not found.");const rsp=await fetch(sU,{signal});if(!rsp.body)throw new Error("Response body not readable.");const rdr=rsp.body.getReader();let lS=0,h=[];while(true){const{done:n,value:v}=await rdr.read();if(n)break;h.push(v);lS+=v.length;uP((lS/tS)*100);}
-    const b=new Blob(h);await this.performVisualLoad(c,b);},async performVisualLoad(c,b){let iB;try{if(typeof createImageBitmap!=='undefined'){iB=await createImageBitmap(b);}else{const oU=URL.createObjectURL(b);try{const tI=new Image();tI.src=oU;await tI.decode();iB=tI;}finally{URL.revokeObjectURL(oU);}}}catch(e){console.error("Image decoding failed:",e);throw e;}
-    c.style.aspectRatio=`${iB.width}/${iB.height}`;const iW=document.createElement('div');iW.className='gallery-image-wrapper';const fI=document.createElement('canvas');fI.className='gallery-image';fI.width=iB.width;fI.height=iB.height;fI.getContext('2d').drawImage(iB,0,0);if(typeof iB.close==='function')iB.close();iW.appendChild(fI);c.appendChild(iW);const p=c.querySelector('.card-placeholder');if(p)p.style.opacity='0';requestAnimationFrame(()=>{fI.classList.add('loaded');});}};
-    async function launchGallery(){if(galleryState.isActive)return;galleryState.isActive=true;galleryState.lastScrollY=window.scrollY;galleryState.controller=new AbortController();document.body.classList.add('gallery-is-active');const gC=document.createElement("div");gC.id=GALLERY_CONTAINER_ID;document.body.appendChild(gC);gC.innerHTML=`<div class="gallery-scroll-container"><button class="gallery-back-btn" title="返回 (Esc)"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ICONS.BACK}</svg></button><div class="gallery-toolbar"><button class="toolbar-btn active" data-mode="mode-standard" title="标准模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.STANDARD_MODE}</svg></button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.WEBTOON_MODE}</svg></button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.FULLWIDTH_MODE}</svg></button></div><div class="gallery-image-list mode-standard"></div><div class="gallery-progress-bar"><div class="progress-track"><div class="progress-thumb"></div></div><div class="progress-label">0 / 0</div></div></div>`;
-    const iLC=gC.querySelector(".gallery-image-list");const l=document.createElement('div');l.className='gallery-global-loader';l.innerHTML=`<svg width="48" height="48" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${ICONS.LOADER}</svg>`;gC.appendChild(l);await preloadAllMetadata();l.remove();imageList.forEach(i=>{const c=document.createElement("div");c.className="gallery-card";c.dataset.path=i.path;if(i.size)c.dataset.size=i.size;c.style.aspectRatio=i.aspectRatio||'3 / 4';c.innerHTML=`${TEMPLATES.PLACEHOLDER}<div class="card-filename">${i.name}</div>`;iLC.appendChild(c);});requestAnimationFrame(()=>gC.classList.add("gallery-active"));setupEventListeners();}
-    async function preloadAllMetadata(){const t=localStorage.getItem('token');const c=5;let p=[];let e=[];for(const i of imageList){const a=(async()=>{try{const r=await fetch(API_GET_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',Authorization:t},body:JSON.stringify({path:i.path}),signal:galleryState.controller.signal});const d=await r.json();i.size=d.data.size;i.aspectRatio=d.data.width&&d.data.height?`${d.data.width}/${d.data.height}`:'3 / 4';}catch(s){console.warn(`Metadata preload failed for ${i.path}`);i.aspectRatio='3 / 4';}})();p.push(a);if(c<=imageList.length){const s=a.finally(()=>e.splice(e.indexOf(s),1));e.push(s);if(e.length>=c)await Promise.race(e);}}
-    await Promise.all(p);}
-    function setupEventListeners(){const c=document.getElementById(GALLERY_CONTAINER_ID);if(!c)return;const sC=c.querySelector('.gallery-scroll-container');const uI=[c.querySelector(".gallery-back-btn"),c.querySelector(".gallery-toolbar"),c.querySelector(".gallery-progress-bar")];const tC=e=>{const t=e.target;if(!t.closest('.gallery-back-btn, .gallery-toolbar, .gallery-progress-bar')){const y=e.clientY;const vH=window.innerHeight;if(y<vH/4){uI[0].classList.toggle('visible');uI[1].classList.toggle('visible');uI[2].classList.remove('visible');}else if(y>vH*3/4){uI[2].classList.toggle('visible');uI[0].classList.remove('visible');uI[1].classList.remove('visible');}else{const iV=uI[0].classList.contains('visible');uI.forEach(el=>el.classList.toggle('visible',!iV));}
-    rHT();}};const rHT=()=>{clearTimeout(galleryState.hideControlsTimeout);galleryState.hideControlsTimeout=setTimeout(()=>{uI.forEach(el=>el.classList.remove('visible'));},3000);};galleryState.clickHandler=tC;c.addEventListener('click',galleryState.clickHandler);setTimeout(()=>uI.forEach(el=>el.classList.add('visible')),500);rHT();c.querySelector(".gallery-back-btn").addEventListener("click",closeGallery);document.addEventListener("keydown",handleKeyPress);document.addEventListener('fullscreenchange',updateFullscreenState);setupProgressBar(sC);const tB=c.querySelector(".gallery-toolbar"),iLC=c.querySelector(".gallery-image-list");if(tB&&iLC){tB.addEventListener("click",e=>{const b=e.target.closest(".toolbar-btn");if(!b)return;const m=b.dataset.mode;["mode-standard","mode-webtoon","mode-full-width"].forEach(x=>iLC.classList.remove(x));iLC.classList.add(m);tB.querySelectorAll(".toolbar-btn").forEach(x=>x.classList.remove("active"));b.classList.add("active");setupLazyLoading(true,m==='mode-webtoon'?'300%':'100%');});}
-    setupLazyLoading(false);}
-    function setupLazyLoading(iR=false,rM='100%'){const t=localStorage.getItem('token');if(!t)return;const sC=document.querySelector(".gallery-scroll-container");if(!sC)return;if(!iR){DownloadManager.initialize(t);if(!sC.reprioritizeListener){const dR=debounce(()=>DownloadManager.reprioritizeQueue(),150);sC.addEventListener('scroll',dR,{passive:true});sC.reprioritizeListener=dR;}}
-    if(loadObserver)loadObserver.disconnect();if(animationObserver)animationObserver.disconnect();loadObserver=new IntersectionObserver(e=>{e.forEach(n=>{if(n.isIntersecting&&n.target.dataset.path){n.target.classList.add('is-visible');DownloadManager.schedule(n.target);loadObserver.unobserve(n.target);}})},{root:sC,rootMargin:rM});animationObserver=new IntersectionObserver((e,o)=>{e.forEach(n=>{if(n.isIntersecting){const i=n.target;const p=i.closest('.gallery-card')?.querySelector('.card-placeholder');if(p)p.style.opacity='0';i.classList.add('loaded');o.unobserve(i);}})},{root:sC,rootMargin:'0px'});document.querySelectorAll('.gallery-card[data-path]').forEach(c=>loadObserver.observe(c));if(!iR)setTimeout(()=>DownloadManager.reprioritizeQueue(),100);}
-    function setupProgressBar(sC){const t=sC.querySelector('.progress-track'),h=sC.querySelector('.progress-thumb'),l=sC.querySelector('.progress-label');if(!t||!h||!l)return;const uP=()=>{const sH=sC.scrollHeight-sC.clientHeight;if(sH<=0){h.style.left='0%';l.textContent=imageList.length>0?`1/${imageList.length}`:`0/0`;return;}
-    const p=sC.scrollTop/sH;const cI=Math.min(imageList.length,Math.max(1,Math.floor(p*imageList.length)+1));h.style.left=`${p*100}%`;l.textContent=`${cI}/${imageList.length}`;};galleryState.progressScrollHandler=uP;sC.addEventListener('scroll',uP,{passive:true});let iD=false;const sD=e=>{iD=true;s(e);document.body.style.userSelect='none';};const eD=()=>{iD=false;document.body.style.userSelect='';};const d=e=>{if(iD)s(e);};const s=e=>{const r=t.getBoundingClientRect();const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));sC.scrollTop=p*(sC.scrollHeight-sC.clientHeight);};t.addEventListener('mousedown',sD);document.addEventListener('mousemove',d);document.addEventListener('mouseup',eD);uP();}
-    function toggleFullscreen(e){if(!document.fullscreenElement){(e||document.documentElement).requestFullscreen().catch(err=>{});}else{document.exitFullscreen();}}
-    function updateFullscreenState(){}
-    function debounce(func,wait){let t;return function(...a){clearTimeout(t);t=setTimeout(()=>func.apply(this,a),wait);};}
-    function closeGallery(){if(!galleryState.isActive)return;if(galleryState.controller)galleryState.controller.abort();if(document.fullscreenElement)document.exitFullscreen();const sC=document.querySelector(".gallery-scroll-container");if(sC){if(galleryState.scrollHandler)sC.removeEventListener('scroll',galleryState.scrollHandler);if(galleryState.clickHandler)sC.removeEventListener('click',galleryState.clickHandler);if(galleryState.progressScrollHandler)sC.removeEventListener('scroll',galleryState.progressScrollHandler);if(sC.reprioritizeListener)sC.removeEventListener('scroll',sC.reprioritizeListener);}
-    clearTimeout(galleryState.hideControlsTimeout);DownloadManager.queue=[];galleryState.isActive=false;const gC=document.getElementById(GALLERY_CONTAINER_ID);if(gC){gC.classList.remove("gallery-active");gC.addEventListener("transitionend",()=>{gC.remove();document.body.classList.remove('gallery-is-active');window.scrollTo(0,galleryState.lastScrollY);},{once:true});}
-    document.removeEventListener("keydown",handleKeyPress);document.removeEventListener('fullscreenchange',updateFullscreenState);if(loadObserver)loadObserver.disconnect();if(animationObserver)animationObserver.disconnect();}
-    function handleKeyPress(e){if(e.key==="Escape")closeGallery();}
-    function scanForImages(){const l=Array.from(document.querySelectorAll("a.list-item, a.grid-item")).filter(e=>{const p=e.querySelector('p.name');return p&&!p.textContent.includes('/');});const fI=l.map(k=>{const n=k.querySelector("p.name");if(!n)return null;const t=n.textContent.trim();const i=IMAGE_EXTENSIONS.some(x=>t.toLowerCase().endsWith(x.toLowerCase()));const rP=decodeURIComponent(new URL(k.href).pathname);return i?{name:t,path:rP}:null;}).filter(Boolean);if(fI.length>=TRIGGER_IMAGE_COUNT){imageList=fI;ToolbarManager.injectButton();}else{imageList=[];ToolbarManager.removeButton();}}
-    const debouncedScan=debounce(scanForImages,300);
-    const observer=new MutationObserver(debouncedScan);
-    const rootObserver=new MutationObserver((_,o)=>{const mCA=document.querySelector(".obj-box");if(mCA){observer.observe(mCA,{childList:true,subtree:true});scanForImages();o.disconnect();}});
-    rootObserver.observe(document.body,{childList:true,subtree:true});
+
+    console.log('[Alist Gallery] Script v20.2 (Legacy) is running!');
+
+    // --- 配置项 ---
+    const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', 'avif', '.svg', '.JPG', '.jxl', '.JXL'];
+    const TRIGGER_IMAGE_COUNT = 5;
+    const GALLERY_BUTTON_ID = 'integrated-gallery-trigger-btn';
+    const GALLERY_CONTAINER_ID = 'immersive-gallery-container';
+    const API_LINK_ENDPOINT = '/api/fs/link';
+    const API_GET_ENDPOINT = '/api/fs/get';
+    const LARGE_FILE_THRESHOLD_MB = 15;
+    const MAX_CONCURRENT_DOWNLOADS = 3;
+    const LOAD_RETRY_COUNT = 2;
+
+    let imageList = [];
+    let loadObserver = null;
+    let animationObserver = null;
+    let galleryState = { isActive: false, lastScrollY: 0, controller: null, reprioritizeTimer: null, hideControlsTimeout: null, scrollHandler: null, clickHandler: null, progressScrollHandler: null };
+
+    // --- [v20.2] 样式最终版 ---
+    GM_addStyle(`
+        :root { --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1); }
+        body.gallery-is-active { overflow: hidden; }
+        body.gallery-is-active > #root { position: fixed; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+        #${GALLERY_CONTAINER_ID} { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; overflow: hidden; opacity: 0; transition: opacity 0.5s ease-in-out; background-color: #f0f2f5; }
+        html[data-theme="dark"] #${GALLERY_CONTAINER_ID} { background-color: #1a202c; }
+        #${GALLERY_CONTAINER_ID} .gallery-scroll-container { width: 100%; height: 100%; overflow-y: auto; scroll-behavior: smooth; }
+        #${GALLERY_CONTAINER_ID}::before, #${GALLERY_CONTAINER_ID}::after { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -2; pointer-events: none; background-repeat: no-repeat; transform-origin: center center;}
+        #${GALLERY_CONTAINER_ID}::before { background: radial-gradient(circle at 10% 10%, rgba(220, 210, 255, 0.6), transparent 50%); animation: shimmer1 30s ease-in-out infinite alternate; }
+        #${GALLERY_CONTAINER_ID}::after { background: radial-gradient(circle at 90% 90%, rgba(210, 255, 245, 0.6), transparent 50%); animation: shimmer2 25s ease-in-out infinite alternate; }
+        @keyframes shimmer1 { from { transform: translate(-15%, -15%) scale(1.5); } to { transform: translate(15%, 15%) scale(1.5); } }
+        @keyframes shimmer2 { from { transform: translate(15%, 15%) scale(1.5); } to { transform: translate(-15%, -15%) scale(1.5); } }
+        #${GALLERY_CONTAINER_ID}.gallery-active { opacity: 1; }
+        .gallery-back-btn, .gallery-toolbar, .gallery-progress-bar { transition: opacity 0.4s var(--ease-out-quart), visibility 0.4s var(--ease-out-quart), transform 0.4s var(--ease-out-quart) !important; z-index: 10001; }
+        .gallery-back-btn, .gallery-toolbar { opacity: 0; visibility: hidden; transform: translateY(-20px); }
+        .gallery-progress-bar { opacity: 0; visibility: hidden; transform: translateY(20px); }
+        .gallery-back-btn.visible, .gallery-toolbar.visible, .gallery-progress-bar.visible { opacity: 1; visibility: visible; transform: translateY(0); }
+        .gallery-back-btn{position:fixed;top:20px;left:20px;width:44px;height:44px;border-radius:50%;display:flex;justify-content:center;align-items:center;cursor:pointer; background:rgba(255,255,255,.5);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid rgba(0,0,0,.08);color:#333;}.gallery-back-btn:hover{background:rgba(255,255,255,.7);transform:scale(1.1) translateY(0) !important}
+        .gallery-toolbar{position:fixed;top:20px;right:20px;display:flex;gap:10px;padding:8px;border-radius:22px; background:rgba(255,255,255,.5);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid rgba(0,0,0,.08);color:#333;}
+        .toolbar-btn{width:36px;height:36px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s, color .2s}.toolbar-btn:hover{background:rgba(0,0,0,.05)}.toolbar-btn.active{background:#8ec5fc;color:#fff !important}
+        .gallery-image-list { display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 10vh 0; }
+        .gallery-card { width: 90%; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); overflow: hidden; position: relative; background-color: rgba(255,255,255,0.1); opacity: 0; transform: translateY(20px); will-change: opacity, transform; transition: opacity 0.8s var(--ease-out-quart), transform 0.8s var(--ease-out-quart), aspect-ratio 0.4s ease-out; aspect-ratio: 3 / 4; min-height: 200px; }
+        .gallery-card.is-visible { opacity: 1; transform: translateY(0); }
+        .card-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; background-color: rgba(255,255,255,0.2); transition: opacity 1.2s var(--ease-out-quart); }
+        html[data-theme="dark"] .card-placeholder { background-color: rgba(0,0,0,0.1); }
+        .gallery-image-wrapper { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .gallery-image { display: block; width: 100%; height: 100%; object-fit: contain; opacity: 0; will-change: opacity; transition: opacity 1.2s var(--ease-out-quart); }
+        .gallery-image.loaded { opacity: 1; }
+        .progress-indicator { position: absolute; width: 80px; height: 80px; display: flex; justify-content: center; align-items: center; opacity: 0; transform: scale(0.8); transition: all 0.3s ease; pointer-events: none; z-index: 5; }
+        .progress-indicator.visible { opacity: 1; transform: scale(1); }
+        .progress-indicator svg { transform: rotate(-90deg); } .progress-circle-bg { fill: none; stroke: rgba(0,0,0,0.1); }
+        .progress-circle-bar { fill: none; stroke: #8ec5fc; stroke-linecap: round; transition: stroke-dashoffset 0.2s linear; }
+        .progress-text { position: absolute; font-size: 16px; font-weight: 500; color: rgba(0,0,0,0.6); font-family: monospace; }
+        .gallery-image-list.mode-standard .gallery-card { max-width: 1000px; } .gallery-image-list.mode-webtoon { gap: 0; } .gallery-image-list.mode-webtoon .gallery-card { width: 100%; max-width: 100%; border-radius: 0; box-shadow: none; background: transparent; } .gallery-image-list.mode-webtoon .gallery-image { object-fit: cover; } .gallery-image-list.mode-webtoon .card-filename { display: none; } .gallery-image-list.mode-full-width .gallery-card { width: 95vw; max-width: 95vw; }
+        .card-filename{position:absolute;bottom:0;left:0;width:100%;padding:20px;box-sizing:border-box;background:linear-gradient(to top,rgba(0,0,0,.7),transparent);color:#fff;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;text-shadow:0 1px 3px black; z-index: 4;}.gallery-card:hover .card-filename{opacity:1}
+        #${GALLERY_BUTTON_ID} { color: #526781; } html[data-theme="dark"] #${GALLERY_BUTTON_ID} { color: #a1aab9; }
+        .gallery-global-loader { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10002; color: #8ec5fc; }
+        .gallery-progress-bar { position: fixed; bottom: 10px; left: 10px; right: 10px; width: auto; height: 50px; display: flex; align-items: center; padding: 0 20px; box-sizing: border-box; background: rgba(0,0,0,0.3); border-radius: 25px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+        .progress-track { flex-grow: 1; height: 6px; background-color: rgba(255,255,255,0.3); border-radius: 3px; position: relative; cursor: pointer; }
+        .progress-thumb { position: absolute; top: -7px; height: 20px; width: 20px; background-color: #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.3); transform: translateX(-50%); }
+        .progress-label { color: white; text-shadow: 0 1px 2px black; font-size: 14px; margin-left: 15px; font-variant-numeric: tabular-nums; }
+    `);
+
+    const ICONS = { GALLERY: `<path fill="currentColor" d="M4 4h7L9 2L4 2c-1.1 0-2 .9-2 2v7l2-2V4zm16 0h-7l2-2h5c1.1 0 2 .9 2 2v5l-2-2V4zM4 20h7l-2 2H4c-1.1 0-2-.9-2-2v-5l2 2v5zm16 0h-7l2 2h5c1.1 0 2-.9 2-2v-5l-2 2v5z"></path>`, BACK: `<line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline>`, STANDARD_MODE: `<rect x="2" y="3" width="20" height="18" rx="2"></rect>`, WEBTOON_MODE: `<line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>`, FULLWIDTH_MODE: `<path d="M22 12H2m4-4-4 4 4 4M18 8l4 4-4 4"></path>`, LOADER: `<path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25"></path><path d="M10.72,19.9a8,8,0,0,1-6.5-9.79A7.77,7.77,0,0,1,10.4,4.16a8,8,0,0,1,9.49,6.52A1.54,1.54,0,0,0,21.38,12h.13a1.37,1.37,0,0,0,1.38-1.54,11,11,0,1,0-12.7,12.39A1.54,1.54,0,0,0,12,21.34h0A1.47,1.47,0,0,0,10.72,19.9Z"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.75s" repeatCount="indefinite"></animateTransform></path>`, };
+    const TEMPLATES = { PLACEHOLDER: `<div class="card-placeholder"><div class="progress-indicator"><svg width="80" height="80" viewBox="0 0 80 80"><circle class="progress-circle-bg" stroke-width="6" cx="40" cy="40" r="35"></circle><circle class="progress-circle-bar" stroke-width="6" cx="40" cy="40" r="35"></circle></svg><span class="progress-text">0%</span></div></div>`, };
+
+    const ToolbarManager = {
+        injectButton() {
+            if (document.getElementById(GALLERY_BUTTON_ID)) return;
+            const toolbar = document.querySelector('.left-toolbar-in');
+            const refreshButton = toolbar?.querySelector('svg[tips="refresh"]');
+            if (!toolbar || !refreshButton) return;
+            const newButton = refreshButton.cloneNode(true);
+            newButton.id = GALLERY_BUTTON_ID;
+            newButton.setAttribute('tips', '沉浸式图廊');
+            newButton.innerHTML = ICONS.GALLERY;
+            newButton.addEventListener('click', (e) => {
+                // [v20.2 FIX] Trigger fullscreen on user interaction
+                const tempFullscreenElement = document.body;
+                toggleFullscreen(tempFullscreenElement);
+                launchGallery();
+            });
+            toolbar.prepend(newButton);
+        },
+        removeButton() { document.getElementById(GALLERY_BUTTON_ID)?.remove(); }
+    };
+
+    const DownloadManager = {
+        queue: [], activeDownloads: 0, token: null,
+        initialize(token) { this.token = token; this.queue = []; this.activeDownloads = 0; },
+        schedule(card) { if (!card.dataset.path || this.queue.some(item => item.card === card)) return; this.queue.push({ card, priority: 9999 }); this.processQueue(); },
+        reprioritizeQueue() { const vh=window.innerHeight; const nq=[]; document.querySelectorAll('.gallery-card[data-path]').forEach(c => { const r=c.getBoundingClientRect(); if (r.top < vh && r.bottom > 0) nq.push({card:c, priority:r.top}); }); nq.sort((a,b)=>a.priority-b.priority); this.queue=nq; this.processQueue(); },
+        async processQueue() { if (document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]')) return; for (const item of this.queue) { if (this.activeDownloads >= MAX_CONCURRENT_DOWNLOADS) break; const card = item.card; if (!card.dataset.path || card.dataset.loading === 'true') continue; this.queue = this.queue.filter(i => i.card !== card); this.loadImageForCard(card, card.dataset.path); } },
+        async loadImageForCard(card, path) {
+            const { signal } = galleryState.controller; card.dataset.loading = 'true'; this.activeDownloads++;
+            try {
+                if (!card.dataset.size) {
+                    const metaRes = await fetch(API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: this.token }, body: JSON.stringify({ path }), signal });
+                    if (!metaRes.ok) throw new Error(`API Get failed: ${metaRes.status}`);
+                    const metaData = await metaRes.json();
+                    card.dataset.size = metaData.data.size;
+                }
+                const totalSize = parseInt(card.dataset.size, 10);
+                const isLargeFile = (totalSize / (1024 * 1024)) > LARGE_FILE_THRESHOLD_MB; card.dataset.isLarge = isLargeFile;
+                if (isLargeFile && this.activeDownloads > 1) { card.dataset.loading = 'false'; this.activeDownloads--; this.schedule(card); return; }
+                let lastError = null;
+                for (let attempt = 1; attempt <= LOAD_RETRY_COUNT + 1; attempt++) {
+                    try { await this.fetchAndDecodeImage(card, path, totalSize); lastError = null; break; }
+                    catch (error) { lastError = error; if (error.name === 'AbortError') break; console.warn(`[Alist Gallery] Attempt ${attempt} failed for ${path}:`, error); if (attempt <= LOAD_RETRY_COUNT) await new Promise(resolve => setTimeout(resolve, 500 * attempt)); }
+                }
+                if (lastError) throw lastError;
+                card.removeAttribute('data-path');
+            } catch (error) {
+                if (error.name !== 'AbortError') { console.error(`[Alist Gallery] Failed for ${path}.`, error); const p = card.querySelector('.card-placeholder'); if(p) p.textContent = '加载失败'; }
+                else { console.log(`[Alist Gallery] Cancelled for ${path}.`); }
+            } finally { const p = card.querySelector('.progress-indicator'); if(p) p.classList.remove('visible'); card.dataset.loading = 'false'; this.activeDownloads--; this.processQueue(); }
+        },
+        async fetchAndDecodeImage(card, path, totalSize) { const { signal } = galleryState.controller; const p=card.querySelector('.progress-indicator'), c=p.querySelector('.progress-circle-bar'), t=p.querySelector('.progress-text'); if (!p||!c||!t) throw new Error("Progress elements not found."); const r=c.r.baseVal.value, cf=2*Math.PI*r; const uP=(pr)=>{c.style.strokeDashoffset=cf-(pr/100)*cf;t.textContent=`${Math.floor(pr)}%`;}; p.classList.add('visible'); uP(0); const lR=await fetch(API_LINK_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json',Authorization:this.token},body:JSON.stringify({path}),signal}); if(!lR.ok) throw new Error(`API Link failed: ${lR.status}`); const lD=await lR.json(); const sU=lD?.data?.url; if(!sU) throw new Error("Signed URL not found."); const rsp=await fetch(sU,{signal}); if(!rsp.body) throw new Error("Response body not readable."); const rdr=rsp.body.getReader(); let lS=0,ch=[]; while(true){const{done,value}=await rdr.read();if(done)break;ch.push(value);lS+=value.length;uP((lS/totalSize)*100);} const b=new Blob(ch); await this.performVisualLoad(card, b); },
+        async performVisualLoad(card, blob) {
+            let imageBitmap;
+            try {
+                if (typeof createImageBitmap !== 'undefined') { imageBitmap = await createImageBitmap(blob); }
+                else { const objectURL = URL.createObjectURL(blob); try { const tempImg = new Image(); tempImg.src = objectURL; await tempImg.decode(); imageBitmap = tempImg; } finally { URL.revokeObjectURL(objectURL); } }
+            } catch (e) { console.error("Image decoding failed:", e); throw e; }
+            card.style.aspectRatio = `${imageBitmap.width} / ${imageBitmap.height}`;
+            const imageWrapper = document.createElement('div'); imageWrapper.className = 'gallery-image-wrapper';
+            const finalImage = document.createElement('canvas'); finalImage.className = 'gallery-image';
+            finalImage.width = imageBitmap.width; finalImage.height = imageBitmap.height;
+            finalImage.getContext('2d').drawImage(imageBitmap, 0, 0);
+            if (typeof imageBitmap.close === 'function') imageBitmap.close();
+            imageWrapper.appendChild(finalImage);
+            card.appendChild(imageWrapper);
+            const placeholder = card.querySelector('.card-placeholder');
+            if(placeholder) placeholder.style.opacity = '0';
+            requestAnimationFrame(() => { finalImage.classList.add('loaded'); });
+        }
+    };
+
+    async function launchGallery() {
+        if (galleryState.isActive) return;
+        galleryState.isActive = true; galleryState.lastScrollY = window.scrollY; galleryState.controller = new AbortController();
+        document.body.classList.add('gallery-is-active');
+        const galleryContainer = document.createElement("div"); galleryContainer.id = GALLERY_CONTAINER_ID; document.body.appendChild(galleryContainer);
+
+        galleryContainer.innerHTML = `
+            <div class="gallery-scroll-container">
+                <button class="gallery-back-btn" title="返回 (Esc)"><svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${ICONS.BACK}</svg></button>
+                <div class="gallery-toolbar"><button class="toolbar-btn active" data-mode="mode-standard" title="标准模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.STANDARD_MODE}</svg></button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.WEBTOON_MODE}</svg></button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.FULLWIDTH_MODE}</svg></button></div>
+                <div class="gallery-image-list mode-standard"></div>
+                <div class="gallery-progress-bar"><div class="progress-track"><div class="progress-thumb"></div></div><div class="progress-label">0 / 0</div></div>
+            </div>`;
+
+        const imageListContainer = galleryContainer.querySelector(".gallery-image-list");
+        const loader = document.createElement('div'); loader.className = 'gallery-global-loader';
+        loader.innerHTML = `<svg width="48" height="48" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${ICONS.LOADER}</svg>`;
+        galleryContainer.appendChild(loader);
+        await preloadAllMetadata();
+        loader.remove();
+
+        imageList.forEach(image => {
+            const card = document.createElement("div"); card.className = "gallery-card"; card.dataset.path = image.path;
+            if (image.size) card.dataset.size = image.size;
+            card.style.aspectRatio = image.aspectRatio || '3 / 4';
+            card.innerHTML = `${TEMPLATES.PLACEHOLDER}<div class="card-filename">${image.name}</div>`;
+            imageListContainer.appendChild(card);
+        });
+        requestAnimationFrame(() => galleryContainer.classList.add("gallery-active"));
+        setupEventListeners();
+    }
+
+    async function preloadAllMetadata() {
+        const token = localStorage.getItem('token'); const CONCURRENT_LIMIT = 5; let promises = []; let executing = [];
+        for (const image of imageList) {
+            const p = (async () => {
+                try {
+                    const res = await fetch(API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token }, body: JSON.stringify({ path: image.path }), signal: galleryState.controller.signal });
+                    const data = await res.json();
+                    image.size = data.data.size;
+                    image.aspectRatio = data.data.width && data.data.height ? `${data.data.width} / ${data.data.height}` : '3 / 4';
+                } catch (e) { console.warn(`Metadata preload failed for ${image.path}`); image.aspectRatio = '3 / 4'; }
+            })();
+            promises.push(p);
+            if (CONCURRENT_LIMIT <= imageList.length) { const e = p.finally(() => executing.splice(executing.indexOf(e), 1)); executing.push(e); if (executing.length >= CONCURRENT_LIMIT) await Promise.race(executing); }
+        }
+        await Promise.all(promises);
+    }
+
+    function setupEventListeners() {
+        const container = document.getElementById(GALLERY_CONTAINER_ID); if (!container) return;
+        const scrollContainer = container.querySelector('.gallery-scroll-container');
+        const uiControls = {
+            top: [container.querySelector(".gallery-back-btn"), container.querySelector(".gallery-toolbar")],
+            bottom: [container.querySelector(".gallery-progress-bar")]
+        };
+
+        const toggleControls = (event) => {
+            if (event.target.closest('.gallery-back-btn, .gallery-toolbar, .gallery-progress-bar')) return;
+            const y = event.clientY;
+            const viewHeight = window.innerHeight;
+            if (y < viewHeight / 4) {
+                uiControls.top.forEach(el => el.classList.toggle('visible'));
+                uiControls.bottom.forEach(el => el.classList.remove('visible'));
+            } else if (y > viewHeight * 3 / 4) {
+                uiControls.bottom.forEach(el => el.classList.toggle('visible'));
+                uiControls.top.forEach(el => el.classList.remove('visible'));
+            } else {
+                const isVisible = container.classList.toggle('controls-visible');
+                uiControls.top.forEach(el => el.classList.toggle('visible', isVisible));
+                uiControls.bottom.forEach(el => el.classList.toggle('visible', isVisible));
+            }
+            resetHideTimer();
+        };
+
+        const resetHideTimer = () => {
+            clearTimeout(galleryState.hideControlsTimeout);
+            galleryState.hideControlsTimeout = setTimeout(() => {
+                container.classList.remove('controls-visible');
+                uiControls.top.forEach(el => el.classList.remove('visible'));
+                uiControls.bottom.forEach(el => el.classList.remove('visible'));
+            }, 3000);
+        };
+        galleryState.clickHandler = toggleControls;
+        container.addEventListener('click', galleryState.clickHandler);
+        setTimeout(() => { container.classList.add('controls-visible'); uiControls.top.forEach(el => el.classList.add('visible')); uiControls.bottom.forEach(el => el.classList.add('visible')); resetHideTimer(); }, 500);
+
+        container.querySelector(".gallery-back-btn").addEventListener("click", closeGallery);
+        document.addEventListener("keydown", handleKeyPress);
+        document.addEventListener('fullscreenchange', updateFullscreenState);
+
+        setupProgressBar(scrollContainer);
+        const toolbar = container.querySelector(".gallery-toolbar"), imageListContainer = container.querySelector(".gallery-image-list");
+        if (toolbar && imageListContainer) {
+            toolbar.addEventListener("click", e => {
+                const button = e.target.closest(".toolbar-btn"); if (!button) return;
+                const mode = button.dataset.mode;
+                ["mode-standard", "mode-webtoon", "mode-full-width"].forEach(m => imageListContainer.classList.remove(m));
+                imageListContainer.classList.add(mode);
+                toolbar.querySelectorAll(".toolbar-btn").forEach(btn => btn.classList.remove("active"));
+                button.classList.add("active");
+                setupLazyLoading(true, mode === 'mode-webtoon' ? '300%' : '100%');
+            });
+        }
+        setupLazyLoading(false);
+    }
+
+    function setupLazyLoading(isResuming = false, rootMargin = '100%') {
+        const token = localStorage.getItem('token'); if (!token) return;
+        const scrollContainer = document.querySelector(".gallery-scroll-container"); if (!scrollContainer) return;
+        if (!isResuming) {
+            DownloadManager.initialize(token);
+            if (!scrollContainer.reprioritizeListener) {
+                const debouncedReprioritize = debounce(() => DownloadManager.reprioritizeQueue(), 150);
+                scrollContainer.addEventListener('scroll', debouncedReprioritize, { passive: true });
+                scrollContainer.reprioritizeListener = debouncedReprioritize;
+            }
+        }
+        if (loadObserver) loadObserver.disconnect();
+        if (animationObserver) animationObserver.disconnect();
+
+        loadObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && entry.target.dataset.path) {
+                    entry.target.classList.add('is-visible');
+                    DownloadManager.schedule(entry.target);
+                    loadObserver.unobserve(entry.target);
+                }
+            });
+        }, { root: scrollContainer, rootMargin });
+        animationObserver = new IntersectionObserver((entries, observer) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const imageEl = entry.target;
+                    const placeholder = imageEl.closest('.gallery-card')?.querySelector('.card-placeholder');
+                    if(placeholder) placeholder.style.opacity = '0';
+                    imageEl.classList.add('loaded');
+                    observer.unobserve(imageEl);
+                }
+            });
+        }, { root: scrollContainer, rootMargin: '0px' });
+
+        document.querySelectorAll('.gallery-card[data-path]').forEach(card => loadObserver.observe(card));
+        if (!isResuming) setTimeout(() => DownloadManager.reprioritizeQueue(), 100);
+    }
+
+    function setupProgressBar(scrollContainer) {
+        const track = scrollContainer.querySelector('.progress-track'), thumb = scrollContainer.querySelector('.progress-thumb'), label = scrollContainer.querySelector('.progress-label');
+        if (!track || !thumb || !label) return;
+        const updateProgress = () => {
+            const scrollableHeight = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+            if (scrollableHeight <= 0) { thumb.style.left = '0%'; label.textContent = imageList.length > 0 ? `1 / ${imageList.length}` : `0 / 0`; return; }
+            const progress = scrollContainer.scrollTop / scrollableHeight;
+            const currentIndex = Math.min(imageList.length, Math.max(1, Math.floor(progress * imageList.length) + 1));
+            thumb.style.left = `${progress * 100}%`;
+            label.textContent = `${currentIndex} / ${imageList.length}`;
+        };
+        galleryState.progressScrollHandler = updateProgress;
+        scrollContainer.addEventListener('scroll', updateProgress, { passive: true });
+
+        let isDragging = false;
+        const getEventX = (e) => e.clientX || (e.touches && e.touches[0].clientX);
+        const startDrag = (e) => { isDragging = true; seek(e); document.body.style.userSelect = 'none'; scrollContainer.style.pointerEvents = 'none'; };
+        const endDrag = () => { isDragging = false; document.body.style.userSelect = ''; scrollContainer.style.pointerEvents = ''; };
+        const drag = (e) => { if (isDragging) seek(e); };
+        const seek = (e) => { const rect = track.getBoundingClientRect(); const clientX = getEventX(e); if (clientX === undefined) return; const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)); scrollContainer.scrollTop = percent * (scrollContainer.scrollHeight - scrollContainer.clientHeight); };
+
+        track.addEventListener('mousedown', startDrag); document.addEventListener('mousemove', drag); document.addEventListener('mouseup', endDrag);
+        track.addEventListener('touchstart', startDrag, { passive: true }); document.addEventListener('touchmove', drag, { passive: true }); document.addEventListener('touchend', endDrag);
+        updateProgress();
+    }
+
+    function toggleFullscreen(element) { if (!document.fullscreenElement) { (element || document.documentElement).requestFullscreen().catch(err => { console.warn(`Fullscreen request failed: ${err.message}`); }); } else { document.exitFullscreen(); } }
+    function updateFullscreenState() { /* Future use if needed */ }
+    function debounce(func, wait) { let t; return function(...a) { clearTimeout(t); t = setTimeout(() => func.apply(this, a), wait); }; }
+    function closeGallery() {
+        if (!galleryState.isActive) return; if (galleryState.controller) galleryState.controller.abort(); if (document.fullscreenElement) document.exitFullscreen();
+        const sc = document.querySelector(".gallery-scroll-container");
+        if (sc) {
+            if(galleryState.scrollHandler) sc.removeEventListener('scroll', galleryState.scrollHandler);
+            if(galleryState.clickHandler) sc.removeEventListener('click', galleryState.clickHandler);
+            if(galleryState.progressScrollHandler) sc.removeEventListener('scroll', galleryState.progressScrollHandler);
+            if(sc.reprioritizeListener) sc.removeEventListener('scroll', sc.reprioritizeListener);
+        }
+        clearTimeout(galleryState.hideControlsTimeout);
+        DownloadManager.queue = []; galleryState.isActive = false;
+        const gc = document.getElementById(GALLERY_CONTAINER_ID);
+        if (gc) { gc.classList.remove("gallery-active"); gc.addEventListener("transitionend", () => { gc.remove(); document.body.classList.remove('gallery-is-active'); window.scrollTo(0, galleryState.lastScrollY); }, { once: true }); }
+        document.removeEventListener("keydown", handleKeyPress);
+        document.removeEventListener('fullscreenchange', updateFullscreenState);
+        if (loadObserver) loadObserver.disconnect();
+        if (animationObserver) animationObserver.disconnect();
+    }
+    function handleKeyPress(e) { if (e.key === "Escape") closeGallery(); }
+    function scanForImages() {
+        const links = Array.from(document.querySelectorAll("a.list-item, a.grid-item")).filter(el => { const p = el.querySelector('p.name'); return p && !p.textContent.includes('/'); });
+        const foundImages = links.map(link => { const nameEl = link.querySelector("p.name"); if (!nameEl) return null; const text = nameEl.textContent.trim(); const isImage = IMAGE_EXTENSIONS.some(ext => text.toLowerCase().endsWith(ext.toLowerCase())); const rawPath = decodeURIComponent(new URL(link.href).pathname); return isImage ? { name: text, path: rawPath } : null; }).filter(Boolean);
+        if (foundImages.length >= TRIGGER_IMAGE_COUNT) { imageList = foundImages; ToolbarManager.injectButton(); }
+        else { imageList = []; ToolbarManager.removeButton(); }
+    }
+
+    const debouncedScan = debounce(scanForImages, 300);
+    const observer = new MutationObserver(debouncedScan);
+    const rootObserver = new MutationObserver((_, obs) => { const mainContentArea = document.querySelector(".obj-box"); if (mainContentArea) { observer.observe(mainContentArea, { childList: true, subtree: true }); scanForImages(); obs.disconnect(); } });
+    rootObserver.observe(document.body, { childList: true, subtree: true });
+
 })();
