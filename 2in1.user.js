@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Alist Ultimate Media Experience v12.1
+// @name         Alist Ultimate Media Experience v13.0
 // @namespace    http://tampermonkey.net/
-// @version      12.1
-// @description  v12.1 "Guardian" - Definitive performance fix. The gallery's rendering engine is now correctly re-architected from <canvas> to native <img> tags, resolving critical performance issues on mobile devices.
+// @version      13.0
+// @description  v13.0 "Velocity" - Major performance and UX overhaul. Strictly limits concurrent requests to 3. Fixes gallery placeholder flickering by pre-setting aspect ratios. Optimizes poster wall's initial load speed with a new priority-based task scheduler.
 // @author       Your Name & AI
 // @license      MIT
 // @include      /^https?://127\.0\.0\.1:5244/.*$/
@@ -13,17 +13,17 @@
 (function () {
     'use strict';
 
-    console.log('[Alist Ultimate Media] Script v12.1 (Guardian) is running!');
+    console.log('[Alist Ultimate Media] Script v13.0 (Velocity) is running!');
 
     // --- 全局常量与配置 ---
-    const DARK_MODE_STORAGE_KEY = 'alist_ultimate_dark_mode_v12.1';
+    const DARK_MODE_STORAGE_KEY = 'alist_ultimate_dark_mode_v13.0';
     let isDarkModeActive = false;
 
-    // --- 样式注入 (无变化) ---
+    // --- 样式注入 (优化) ---
     GM_addStyle(`
         :root { --ease-out-spring: cubic-bezier(0.22, 1, 0.36, 1); --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1); --angle: 0deg; }
         @property --angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
-        /* ... (所有v11.0的CSS都保持不变, 此处省略以保持简洁) ... */
+        /* ... (大部分v12.1的CSS保持不变, 此处省略以保持简洁) ... */
         .poster-wall-btn-container { width: 100%; padding: 10px 1.5rem; box-sizing: border-box; margin-bottom: 10px; }
         .poster-wall-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 12px; font-size: 1rem; font-weight: 600; color: #fff; background: linear-gradient(135deg, #1890ff, #3875f6); border: none; border-radius: 8px; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px -5px rgba(24, 144, 255, 0.6); }
         .poster-wall-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px -5px rgba(24, 144, 255, 0.8); }
@@ -102,9 +102,11 @@
         .toolbar-btn{width:36px;height:36px;border:none;background:transparent;color:#333;cursor:pointer;border-radius:50%;display:flex;justify-content:center;align-items:center;transition:background-color .2s, color .2s}.toolbar-btn:hover{background:rgba(0,0,0,.05)}.toolbar-btn.active{background:#1890ff;color:#fff !important}
         html[data-theme="dark"] .toolbar-btn { color: #eee; } html[data-theme="dark"] .toolbar-btn:hover { background:rgba(255,255,255,.1); }
         .gallery-image-list { display: flex; flex-direction: column; align-items: center; gap: 40px; padding: 10vh 0; }
-        .gallery-card { width: 90%; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); overflow: hidden; position: relative; background-color: rgba(255,255,255,0.1); opacity: 0; transform: translateY(20px); will-change: opacity, transform; transition: opacity 0.8s var(--ease-out-quart), transform 0.8s var(--ease-out-quart), aspect-ratio 0.4s ease-out; aspect-ratio: 3 / 4; min-height: 200px; }
+        /* [优化 v13.0] 移除 aspect-ratio 的 transition, 避免占位符尺寸变化导致的闪烁 */
+        .gallery-card { width: 90%; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); overflow: hidden; position: relative; background-color: rgba(255,255,255,0.1); opacity: 0; transform: translateY(20px); will-change: opacity, transform; transition: opacity 0.8s var(--ease-out-quart), transform 0.8s var(--ease-out-quart); aspect-ratio: 3 / 4; min-height: 200px; }
         html[data-theme="dark"] .gallery-card { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
         .gallery-card.is-visible { opacity: 1; transform: translateY(0); }
+        /* [优化 v13.0] 占位符不再闪烁，因为它将在具有正确宽高比的父元素中渲染 */
         .card-placeholder { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; transition: opacity 1.2s var(--ease-out-quart); background: linear-gradient(90deg, rgba(255,255,255,0.2) 25%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0.2) 75%); background-size: 200% 100%; animation: placeholder-shimmer 2s infinite linear; }
         html[data-theme="dark"] .card-placeholder { background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%); background-size: 200% 100%; animation-name: placeholder-shimmer; }
         @keyframes placeholder-shimmer { 0% { background-position: -100% 0; } 100% { background-position: 100% 0; } }
@@ -140,24 +142,150 @@
      * ===================================================================
      */
     const PosterWallModule = {
-        CONFIG: { PAGE_SIZE: 120, API_FS_LINK_ENDPOINT: '/api/fs/link', COVER_FILENAME: '000-Cover.jpg', CACHE_KEY_PREFIX: 'alist_poster_cache_v11.0_', MAX_CONCURRENT_SCANS: 4, LAZY_LOAD_DELAY: 150, },
+        CONFIG: {
+            PAGE_SIZE: 120,
+            API_FS_LINK_ENDPOINT: '/api/fs/link',
+            COVER_FILENAME: '000-Cover.jpg',
+            CACHE_KEY_PREFIX: 'alist_poster_cache_v13.0_',
+            MAX_CONCURRENT_SCANS: 3, // [优化 v13.0] 严格控制并发数为3
+        },
         state: {},
         elements: { galleryContainer: null, galleryGrid: null, galleryCloseBtn: null, galleryTitle: null, activationButtonContainer: null, isButtonInjected: false, darkModeToggleButton: null, paginationControls: null },
-        initializeState() { if (this.state.controller) this.state.controller.abort(); if (this.state.observer) { this.state.observer.disconnect(); } this.state = { isActive: false, cards: new Map(), observer: null, controller: new AbortController(), allItems: [], currentPage: 1, totalPages: 1, activeScans: 0, lazyLoadTimers: new WeakMap() }; if (this.elements.galleryGrid) this.elements.galleryGrid.innerHTML = ''; },
+        initializeState() {
+            if (this.state.controller) this.state.controller.abort();
+            if (this.state.observer) { this.state.observer.disconnect(); }
+            this.state = {
+                isActive: false,
+                allItems: [],
+                currentPage: 1,
+                totalPages: 1,
+                controller: new AbortController(),
+                observer: null,
+                taskQueue: [], // [新增 v13.0] 任务队列
+                activeScans: 0,  // [新增 v13.0] 当前活跃的扫描任务数
+            };
+            if (this.elements.galleryGrid) this.elements.galleryGrid.innerHTML = '';
+        },
         init() { this.createView(); },
         createView() { if (document.getElementById('poster-wall-container')) return; const container = document.createElement('div'); container.id = 'poster-wall-container'; container.className = 'poster-wall-container'; const header = document.createElement('div'); header.className = 'poster-wall-header'; const title = document.createElement('h1'); title.className = 'poster-wall-title'; this.elements.galleryTitle = title; header.appendChild(title); const grid = document.createElement('div'); grid.className = 'poster-wall-grid'; this.elements.galleryGrid = grid; const closeBtn = document.createElement('button'); closeBtn.className = 'poster-wall-close-btn'; closeBtn.innerHTML = '&times;'; closeBtn.onclick = () => this.close(); this.elements.galleryCloseBtn = closeBtn; const darkModeBtn = document.createElement('button'); darkModeBtn.id = 'dark-mode-toggle-btn'; darkModeBtn.title = '切换背景模式'; darkModeBtn.innerHTML = `<svg class="icon-moon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg><svg class="icon-sun" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`; darkModeBtn.onclick = toggleDarkMode; this.elements.darkModeToggleButton = darkModeBtn; const pagination = document.createElement('div'); pagination.className = 'poster-pagination-controls'; pagination.innerHTML = `<button class="pagination-btn prev-btn">&lt; 上一页</button><span class="pagination-info"></span><button class="pagination-btn next-btn">下一页 &gt;</button>`; pagination.querySelector('.prev-btn').onclick = () => this.goToPrevPage(); pagination.querySelector('.next-btn').onclick = () => this.goToNextPage(); this.elements.paginationControls = pagination; container.append(closeBtn, darkModeBtn, header, grid, pagination); document.body.appendChild(container); this.elements.galleryContainer = container; applyDarkModeState(); },
         open() { const breadcrumbItems = document.querySelectorAll('.hope-breadcrumb__list .hope-breadcrumb__item'); const lastItem = breadcrumbItems[breadcrumbItems.length - 1]?.querySelector('.hope-breadcrumb__link'); this.elements.galleryTitle.textContent = lastItem ? lastItem.textContent : 'Gallery'; document.body.classList.add('poster-wall-is-active'); document.querySelector('.obj-box').style.display = 'none'; this.elements.galleryContainer.style.display = 'block'; this.elements.galleryContainer.scrollTop = 0; this.initializeState(); this.state.isActive = true; this.buildAndLaunch(); },
         close() { document.body.classList.remove('poster-wall-is-active'); this.elements.galleryContainer.style.display = 'none'; document.querySelector('.obj-box').style.display = ''; this.initializeState(); },
         buildAndLaunch() { const items = Array.from(document.querySelectorAll('.obj-box .grid-item, .obj-box .list-item')); this.state.allItems = items.filter(item => !!item.querySelector('svg [d^="M496 152a56"], svg [d^="M464 128H272l-54.63-54.63"]')); this.state.totalPages = Math.ceil(this.state.allItems.length / this.CONFIG.PAGE_SIZE); this.state.currentPage = 1; this.renderCurrentPage(); this.updatePaginationControls(); },
-        renderCurrentPage() { this.elements.galleryGrid.innerHTML = ''; if (this.state.observer) this.state.observer.disconnect(); this.state.cards.clear(); this.setupLazyLoading(); const startIndex = (this.state.currentPage - 1) * this.CONFIG.PAGE_SIZE; const endIndex = startIndex + this.CONFIG.PAGE_SIZE; const pageItems = this.state.allItems.slice(startIndex, endIndex); pageItems.forEach(item => { const linkElement = item.querySelector('a[href]') || item; if (!linkElement.href) return; const path = decodeURIComponent(new URL(linkElement.href).pathname); const cardContainer = document.createElement('div'); cardContainer.className = 'poster-card-container is-skeleton'; cardContainer.dataset.path = path; cardContainer.onclick = (e) => { e.preventDefault(); ImmersiveGalleryModule.launchForPath(path, linkElement.href); }; this.elements.galleryGrid.appendChild(cardContainer); const task = { id: path, state: 'idle', el: cardContainer, path: path, originalElement: item }; this.state.cards.set(path, task); this.state.observer.observe(cardContainer); }); },
+        renderCurrentPage() {
+            this.elements.galleryGrid.innerHTML = '';
+            if (this.state.observer) this.state.observer.disconnect();
+            
+            this.setupLazyLoading();
+
+            const startIndex = (this.state.currentPage - 1) * this.CONFIG.PAGE_SIZE;
+            const endIndex = startIndex + this.CONFIG.PAGE_SIZE;
+            const pageItems = this.state.allItems.slice(startIndex, endIndex);
+
+            pageItems.forEach(item => {
+                const linkElement = item.querySelector('a[href]') || item;
+                if (!linkElement.href) return;
+                const path = decodeURIComponent(new URL(linkElement.href).pathname);
+                
+                const cardContainer = document.createElement('div');
+                cardContainer.className = 'poster-card-container is-skeleton';
+                cardContainer.dataset.path = path;
+                cardContainer.onclick = (e) => { e.preventDefault(); ImmersiveGalleryModule.launchForPath(path, linkElement.href); };
+                this.elements.galleryGrid.appendChild(cardContainer);
+                
+                const task = {
+                    id: path,
+                    element: cardContainer,
+                    path: path,
+                    originalElement: item,
+                    status: 'pending' // pending, loading, done
+                };
+                
+                this.state.taskQueue.push(task); // 将所有任务先加入队列
+                this.state.observer.observe(cardContainer);
+            });
+        },
         updatePaginationControls() { if (!this.elements.paginationControls) return; if (this.state.totalPages <= 1) { this.elements.paginationControls.style.display = 'none'; return; } this.elements.paginationControls.style.display = 'flex'; const [prevBtn, info, nextBtn] = this.elements.paginationControls.children; info.textContent = `第 ${this.state.currentPage} / ${this.state.totalPages} 页`; prevBtn.disabled = this.state.currentPage === 1; nextBtn.disabled = this.state.currentPage === this.state.totalPages; },
         goToPrevPage() { if (this.state.currentPage > 1) { this.state.currentPage--; this.renderCurrentPage(); this.updatePaginationControls(); this.elements.galleryContainer.scrollTop = 0; } },
         goToNextPage() { if (this.state.currentPage < this.state.totalPages) { this.state.currentPage++; this.renderCurrentPage(); this.updatePaginationControls(); this.elements.galleryContainer.scrollTop = 0; } },
-        setupLazyLoading() { this.state.observer = new IntersectionObserver(entries => { entries.forEach(entry => { const timer = this.state.lazyLoadTimers.get(entry.target); clearTimeout(timer); if (entry.isIntersecting) { const newTimer = setTimeout(() => { const path = entry.target.dataset.path; if (!path) return; const task = this.state.cards.get(path); if (task && task.state === 'idle') this.processQueue(task); }, this.CONFIG.LAZY_LOAD_DELAY); this.state.lazyLoadTimers.set(entry.target, newTimer); } }); }, { root: this.elements.galleryContainer, rootMargin: '100% 0px' }); },
-        processQueue(task) { if (this.state.activeScans >= this.CONFIG.MAX_CONCURRENT_SCANS) { setTimeout(() => this.processQueue(task), 200); return; } this.transitionState(task, 'SCAN'); },
-        transitionState(task, action) { if (!task || !task.el) return; switch (task.state) { case 'idle': if (action === 'SCAN') { task.state = 'scanning'; this.scanAndProcessFolder(task); } break; case 'scanning': if (action === 'PROCESS_SUCCESS') { task.state = 'done'; this.renderCard(task, false); } else if (action === 'NO_COVER_FOUND' || action === 'PROCESS_ERROR') { task.state = 'done_no_cover'; this.renderCard(task, true); } break; } },
-        async scanAndProcessFolder(task) { this.state.activeScans++; const { signal } = this.state.controller; try { const cacheKey = `${this.CONFIG.CACHE_KEY_PREFIX}${task.path}`; const cachedData = JSON.parse(sessionStorage.getItem(cacheKey)); if (cachedData) { if (cachedData.noCover) { this.transitionState(task, 'NO_COVER_FOUND'); } else { const blob = await (await fetch(cachedData.signedUrl, { signal })).blob(); task.imageBlobUrl = URL.createObjectURL(blob); this.transitionState(task, 'PROCESS_SUCCESS'); } return; } const coverPath = `${task.path.endsWith('/') ? task.path : task.path + '/'}${this.CONFIG.COVER_FILENAME}`; const linkResp = await fetch(this.CONFIG.API_FS_LINK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: localStorage.getItem('token') }, body: JSON.stringify({ path: coverPath }), signal }); if (!linkResp.ok) { if (linkResp.status === 401) { task.errorType = 'auth'; } sessionStorage.setItem(cacheKey, JSON.stringify({ noCover: true })); this.transitionState(task, 'NO_COVER_FOUND'); return; } const linkData = await linkResp.json(); const signedUrl = linkData?.data?.url; if (!signedUrl) throw new Error("Signed URL is null."); const imageBlob = await (await fetch(signedUrl, { signal })).blob(); task.imageBlobUrl = URL.createObjectURL(imageBlob); sessionStorage.setItem(cacheKey, JSON.stringify({ signedUrl })); this.transitionState(task, 'PROCESS_SUCCESS'); } catch (error) { if (error.name !== 'AbortError') { console.error(`[Poster Wall] Process failed for ${task.path}:`, error); this.transitionState(task, 'PROCESS_ERROR'); } } finally { this.state.activeScans--; } },
-        renderCard(task, isFallback) { const { el: containerElement, originalElement } = task; if (!containerElement || !document.body.contains(containerElement)) return; const nameElement = originalElement.querySelector('.name, .hope-text'); const folderName = nameElement ? nameElement.textContent.trim() : 'Unknown'; containerElement.classList.remove('is-skeleton'); const card = document.createElement('div'); card.className = 'poster-card'; if (isFallback) { let fallbackHTML = `<div class="fallback-icon">🗀</div><div class="fallback-text">${folderName}`; if (task.errorType === 'auth') { fallbackHTML += `<small>认证失败, Token可能已过期</small>`; } card.innerHTML = `<div class="no-cover-content">${fallbackHTML}</div>`; } else { const img = document.createElement('img'); img.className = 'poster-card-img'; const info = document.createElement('div'); info.className = 'poster-card-info'; const titleRegex = /^\[([^\]]+)\]\s*([^(\[]+)/; const match = folderName.match(titleRegex); if (match) { const [ , author, title ] = match.map(s => s.trim()); info.innerHTML = `<span class="info-title" title="${title}">${title}</span><span class="info-author" title="${author}">作者: ${author}</span>`; } else { info.innerHTML = `<span class="info-title" title="${folderName}">${folderName}</span>`; } card.append(img, info); if (task.imageBlobUrl) { img.src = task.imageBlobUrl; img.onload = () => { img.classList.add('is-loaded'); URL.revokeObjectURL(img.src); }; } } containerElement.append(card); this.addInteractiveEffects(containerElement); },
+
+        // [优化 v13.0] 重构懒加载和任务调度逻辑
+        setupLazyLoading() {
+            this.state.observer = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const path = entry.target.dataset.path;
+                        if (!path) return;
+                        const task = this.state.taskQueue.find(t => t.id === path);
+                        // 初始视口内的项目立即执行，滚动的项目稍作延迟
+                        const delay = entry.boundingClientRect.top < window.innerHeight ? 0 : 100;
+                        setTimeout(() => this.processTaskQueue(), delay);
+                    }
+                });
+            }, { root: this.elements.galleryContainer, rootMargin: '100% 0px' });
+        },
+
+        processTaskQueue() {
+            if (this.state.activeScans >= this.CONFIG.MAX_CONCURRENT_SCANS) {
+                return;
+            }
+
+            const nextTask = this.state.taskQueue.find(task => task.status === 'pending' && task.element.getBoundingClientRect().top < window.innerHeight * 2.5);
+            if (!nextTask) return;
+
+            nextTask.status = 'loading';
+            this.state.activeScans++;
+            
+            this.scanAndProcessFolder(nextTask).finally(() => {
+                this.state.activeScans--;
+                nextTask.status = 'done';
+                // 尝试处理队列中的下一个任务
+                this.processTaskQueue();
+            });
+        },
+        
+        async scanAndProcessFolder(task) {
+            const { signal } = this.state.controller;
+            try {
+                const cacheKey = `${this.CONFIG.CACHE_KEY_PREFIX}${task.path}`;
+                const cachedData = JSON.parse(sessionStorage.getItem(cacheKey));
+                
+                if (cachedData) {
+                    if (cachedData.noCover) { this.renderCard(task, true); } 
+                    else {
+                        const blob = await (await fetch(cachedData.signedUrl, { signal })).blob();
+                        task.imageBlobUrl = URL.createObjectURL(blob);
+                        this.renderCard(task, false);
+                    }
+                    return;
+                }
+                
+                const coverPath = `${task.path.endsWith('/') ? task.path : task.path + '/'}${this.CONFIG.COVER_FILENAME}`;
+                const linkResp = await fetch(this.CONFIG.API_FS_LINK_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: localStorage.getItem('token') }, body: JSON.stringify({ path: coverPath }), signal });
+                
+                if (!linkResp.ok) {
+                    if (linkResp.status === 401) { task.errorType = 'auth'; }
+                    sessionStorage.setItem(cacheKey, JSON.stringify({ noCover: true }));
+                    this.renderCard(task, true);
+                    return;
+                }
+                
+                const linkData = await linkResp.json();
+                const signedUrl = linkData?.data?.url;
+                if (!signedUrl) throw new Error("Signed URL is null.");
+                
+                const imageBlob = await (await fetch(signedUrl, { signal })).blob();
+                task.imageBlobUrl = URL.createObjectURL(imageBlob);
+                sessionStorage.setItem(cacheKey, JSON.stringify({ signedUrl }));
+                this.renderCard(task, false);
+
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    console.error(`[Poster Wall] Process failed for ${task.path}:`, error);
+                    this.renderCard(task, true);
+                }
+            }
+        },
+        renderCard(task, isFallback) { const { element: containerElement, originalElement } = task; if (!containerElement || !document.body.contains(containerElement)) return; const nameElement = originalElement.querySelector('.name, .hope-text'); const folderName = nameElement ? nameElement.textContent.trim() : 'Unknown'; containerElement.classList.remove('is-skeleton'); const card = document.createElement('div'); card.className = 'poster-card'; if (isFallback) { let fallbackHTML = `<div class="fallback-icon">🗀</div><div class="fallback-text">${folderName}`; if (task.errorType === 'auth') { fallbackHTML += `<small>认证失败, Token可能已过期</small>`; } card.innerHTML = `<div class="no-cover-content">${fallbackHTML}</div>`; } else { const img = document.createElement('img'); img.className = 'poster-card-img'; const info = document.createElement('div'); info.className = 'poster-card-info'; const titleRegex = /^\[([^\]]+)\]\s*([^(\[]+)/; const match = folderName.match(titleRegex); if (match) { const [ , author, title ] = match.map(s => s.trim()); info.innerHTML = `<span class="info-title" title="${title}">${title}</span><span class="info-author" title="${author}">作者: ${author}</span>`; } else { info.innerHTML = `<span class="info-title" title="${folderName}">${folderName}</span>`; } card.append(img, info); if (task.imageBlobUrl) { img.src = task.imageBlobUrl; img.onload = () => { img.classList.add('is-loaded'); URL.revokeObjectURL(img.src); }; } } containerElement.append(card); this.addInteractiveEffects(containerElement); },
         addInteractiveEffects(containerElement) { if (Utils.isTouchDevice()) return; const MAX_TILT = 15; let animationFrameId = null; containerElement.addEventListener('mousemove', (e) => { if (animationFrameId) cancelAnimationFrame(animationFrameId); animationFrameId = requestAnimationFrame(() => { const rect = containerElement.getBoundingClientRect(); const x = e.clientX - rect.left; const y = e.clientY - rect.top; const rotateY = (x / rect.width - 0.5) * 2 * MAX_TILT; const rotateX = (0.5 - y / rect.height) * 2 * MAX_TILT; containerElement.style.transform = `scale(1.05) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`; }); }); containerElement.addEventListener('mouseenter', () => { containerElement.classList.add('is-interactive'); }); containerElement.addEventListener('mouseleave', () => { if (animationFrameId) cancelAnimationFrame(animationFrameId); containerElement.classList.remove('is-interactive'); containerElement.style.transform = `scale(1) rotateX(0deg) rotateY(0deg)`; }); },
     };
 
@@ -181,11 +309,18 @@
             document.body.appendChild(galleryContainer);
             galleryContainer.innerHTML = `<div class="gallery-scroll-container"><button class="gallery-back-btn" title="返回 (Esc)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${this.CONFIG.ICONS.BACK}</svg></button><div class="gallery-toolbar"><button class="toolbar-btn active" data-mode="mode-standard" title="标准模式"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${this.CONFIG.ICONS.STANDARD_MODE}</svg></button><button class="toolbar-btn" data-mode="mode-webtoon" title="Webtoon模式"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${this.CONFIG.ICONS.WEBTOON_MODE}</svg></button><button class="toolbar-btn" data-mode="mode-full-width" title="全屏宽度"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${this.CONFIG.ICONS.FULLWIDTH_MODE}</svg></button></div><div class="gallery-image-list mode-standard"></div><div class="gallery-progress-bar"><div class="progress-track"><div class="progress-thumb"></div></div><div class="progress-label">0 / 0</div></div></div>`;
             const imageListContainer = galleryContainer.querySelector(".gallery-image-list");
+            
+            // [优化 v13.0] 确保元数据完全加载后再进行渲染
             await this.preloadAllMetadata();
+            
             this.state.imageList.forEach(image => {
-                const card = document.createElement("div"); card.className = "gallery-card"; card.dataset.path = image.path;
+                const card = document.createElement("div");
+                card.className = "gallery-card"; card.dataset.path = image.path;
                 if (image.size) card.dataset.size = image.size;
+                
+                // [优化 v13.0] 关键修复：直接在此处设置准确的宽高比，防止闪烁
                 card.style.aspectRatio = image.aspectRatio || '3 / 4';
+                
                 let fileInfo = image.name;
                 if (image.width && image.height) { fileInfo += ` - ${image.width}x${image.height}`; }
                 if (image.size) { fileInfo += ` - ${Utils.formatBytes(image.size)}`; }
@@ -196,7 +331,37 @@
             this.setupEventListeners();
             Utils.requestFullscreen(galleryContainer);
         },
-        async preloadAllMetadata() { const token = localStorage.getItem('token'); const CONCURRENT_LIMIT = 5; let promises = []; let executing = []; for (const image of this.state.imageList) { const p = (async () => { try { const res = await fetch(this.CONFIG.API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token }, body: JSON.stringify({ path: image.path }), signal: this.state.controller.signal }); const { data: fileData } = await res.json(); image.size = fileData.size; image.width = fileData.width; image.height = fileData.height; image.aspectRatio = image.width && image.height ? `${image.width} / ${image.height}` : '3 / 4'; } catch (e) { console.warn(`Metadata preload failed for ${image.path}`); image.aspectRatio = '3 / 4'; } })(); promises.push(p); if (CONCURRENT_LIMIT <= this.state.imageList.length) { const e = p.finally(() => executing.splice(executing.indexOf(e), 1)); executing.push(e); if (executing.length >= CONCURRENT_LIMIT) await Promise.race(executing); } } await Promise.all(promises); },
+        async preloadAllMetadata() {
+            const token = localStorage.getItem('token');
+            const CONCURRENT_LIMIT = 3; // [优化 v13.0] 严格控制并发数为3
+            let promises = [];
+            let executing = [];
+            for (const image of this.state.imageList) {
+                const p = (async () => {
+                    try {
+                        const res = await fetch(this.CONFIG.API_GET_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: token }, body: JSON.stringify({ path: image.path }), signal: this.state.controller.signal });
+                        if (!res.ok) throw new Error(`API Get failed with status ${res.status}`);
+                        const { data: fileData } = await res.json();
+                        image.size = fileData.size;
+                        image.width = fileData.width;
+                        image.height = fileData.height;
+                        image.aspectRatio = image.width && image.height ? `${image.width} / ${image.height}` : '3 / 4';
+                    } catch (e) {
+                        console.warn(`Metadata preload failed for ${image.path}:`, e.message);
+                        image.aspectRatio = '3 / 4'; // 确保失败时有回退值
+                    }
+                })();
+                promises.push(p);
+                if (CONCURRENT_LIMIT <= this.state.imageList.length) {
+                    const e = p.finally(() => executing.splice(executing.indexOf(e), 1));
+                    executing.push(e);
+                    if (executing.length >= CONCURRENT_LIMIT) {
+                        await Promise.race(executing);
+                    }
+                }
+            }
+            await Promise.all(promises);
+        },
         close() { if (!this.state.isActive) return; if (this.state.controller) this.state.controller.abort(); if (document.fullscreenElement) document.exitFullscreen().catch(e => console.warn(e)); const container = document.getElementById(this.CONFIG.CONTAINER_ID); if (!container) return; const scrollContainer = container.querySelector(".gallery-scroll-container"); if (scrollContainer) { if (this.state.clickHandler) scrollContainer.removeEventListener('click', this.state.clickHandler); if (this.state.progressScrollHandler) scrollContainer.removeEventListener('scroll', this.state.progressScrollHandler); if (scrollContainer.reprioritizeListener) scrollContainer.removeEventListener('scroll', scrollContainer.reprioritizeListener); } this.updateViewportMeta(false); clearTimeout(this.state.hideControlsTimeout); this.downloadManager.queue = []; this.state.isActive = false; container.classList.remove("gallery-active"); container.addEventListener("transitionend", () => { container.remove(); document.body.classList.remove('gallery-is-active'); }, { once: true }); document.removeEventListener("keydown", this.handleKeyPress); if (this.state.loadObserver) this.state.loadObserver.disconnect(); },
         handleKeyPress(e) { if (e.key === "Escape") ImmersiveGalleryModule.close(); },
         setupEventListeners() { /* ... */ },
@@ -205,9 +370,7 @@
         updateViewportMeta(enableEdgeToEdge) { /* ... */ },
     };
     ImmersiveGalleryModule.downloadManager = { queue:[],activeDownloads:0,token:null, initialize(t){this.token=t,this.queue=[],this.activeDownloads=0}, schedule(t){if(!this.queue.some(e=>e.card===t)){this.queue.push({card:t,priority:9999});this.processQueue()}}, reprioritizeQueue(){const t=window.innerHeight,e=[];document.querySelectorAll(".gallery-card[data-path]").forEach(n=>{const o=n.getBoundingClientRect();if(o.top<t&&o.bottom>0){e.push({card:n,priority:o.top})}});e.sort((n,o)=>n.priority-o.priority);this.queue=e;this.processQueue()}, async processQueue(){if(document.querySelector('.gallery-card[data-is-large="true"][data-loading="true"]')){return}for(const t of this.queue){if(!(this.activeDownloads>=ImmersiveGalleryModule.CONFIG.MAX_CONCURRENT_DOWNLOADS)){const e=t.card;if(e.dataset.path&&!e.dataset.loading){this.queue=this.queue.filter(n=>n.card!==e);this.loadImageForCard(e,e.dataset.path)}}}}, async loadImageForCard(t,e){const{signal:n}=ImmersiveGalleryModule.state.controller;t.dataset.loading="true";this.activeDownloads++;try{if(!t.dataset.size){const o=await fetch(ImmersiveGalleryModule.CONFIG.API_GET_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json",Authorization:this.token},body:JSON.stringify({path:e}),signal:n});if(!o.ok)throw new Error(`API Get failed: ${o.status}`);const a=(await o.json()).data;t.dataset.size=a.size}const r=parseInt(t.dataset.size,10),i=r/1048576>ImmersiveGalleryModule.CONFIG.LARGE_FILE_THRESHOLD_MB;t.dataset.isLarge=i;if(i&&this.activeDownloads>1){t.dataset.loading="false";this.activeDownloads--;this.schedule(t);return}let s=null;for(let l=1;l<=ImmersiveGalleryModule.CONFIG.LOAD_RETRY_COUNT+1;l++){try{await this.fetchAndDecodeImage(t,e,r);s=null;break}catch(c){s=c;if(c.name==="AbortError"){break}console.warn(`[Gallery] Attempt ${l} failed for ${e}:`,c);if(l<=ImmersiveGalleryModule.CONFIG.LOAD_RETRY_COUNT){await new Promise(d=>setTimeout(d,500*l))}}}if(s)throw s;t.removeAttribute("data-path")}catch(u){if(u.name!=="AbortError"){console.error(`[Gallery] Failed for ${e}.`,u);if(t.querySelector(".card-placeholder")){t.querySelector(".card-placeholder").textContent="加载失败"}}else{console.log(`[Gallery] Cancelled for ${e}.`)}}finally{const m=t.querySelector(".progress-indicator");if(m){m.classList.remove("visible")}t.dataset.loading="false";this.activeDownloads--;this.processQueue()}}, async fetchAndDecodeImage(t,e,n){const{signal:o}=ImmersiveGalleryModule.state.controller;const a=t.querySelector(".progress-indicator"),r=a.querySelector(".progress-circle-bar"),i=a.querySelector(".progress-text");if(!a||!r||!i)throw new Error("Progress elements not found.");const s=r.r.baseVal.value,l=2*Math.PI*s;const c=d=>{r.style.strokeDashoffset=l-d/100*l;i.textContent=`${Math.floor(d)}%`};a.classList.add("visible");c(0);const u=await fetch(ImmersiveGalleryModule.CONFIG.API_LINK_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json",Authorization:this.token},body:JSON.stringify({path:e}),signal:o});if(!u.ok)throw new Error(`API Link failed: ${u.status}`);const g=(await u.json()).data.url;if(!g)throw new Error("Signed URL not found.");const p=await fetch(g,{signal:o});if(!p.body)throw new Error("Response body not readable.");const h=p.body.getReader();let w=0,v=[];for(;;){const{done:y,value:b}=await h.read();if(y)break;v.push(b);w+=b.length;c(w/n*100)}const f=new Blob(v);await this.performVisualLoad(t,f)},
-        /**
-         * [v12.0] 核心性能优化: 使用 <img> 替代 <canvas>
-         */
+        // [优化 v13.0] 渲染逻辑保持不变，但由于父容器宽高比已正确，体验将得到改善
         async performVisualLoad(cardElement, imageBlob) {
             const imageUrl = URL.createObjectURL(imageBlob);
             const imageWrapper = document.createElement("div");
@@ -221,8 +384,11 @@
                 // 在后台解码图片，避免UI线程阻塞
                 await img.decode();
 
-                // 更新卡片的宽高比以匹配图片真实比例
-                cardElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+                // [优化 v13.0] 再次确认宽高比，以防元数据和实际图像不符
+                const naturalAspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+                if (cardElement.style.aspectRatio !== naturalAspectRatio) {
+                    cardElement.style.aspectRatio = naturalAspectRatio;
+                }
 
                 imageWrapper.appendChild(img);
                 cardElement.appendChild(imageWrapper);
