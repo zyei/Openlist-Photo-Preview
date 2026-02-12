@@ -1,217 +1,172 @@
 // ==UserScript==
-// @name         OpenList Cinema V2.2 (Glass Unified)
+// @name         OpenList Cinema V3.1 (Pro Logic)
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
-// @description  Alist/OpenList 极致美化：全玻璃拟态海报墙 + 沉浸式阅读器 (统一视觉/无损缩放)
+// @version      3.1.0
+// @description  Alist/OpenList 终极形态：智能目录分层排序 + 宽泛海报识别 + 完美像素级分页
 // @author       Advanced AI
-// @match        *://*/*
-// @include      *
+// @include      *://127.0.0.1/*
+// @include      *://127.0.0.1:*/*
+// @include      *://localhost/*
+// @include      *://localhost:*/*
+// @include      *://192.168.*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
-// @grant        GM_setValue
-// @grant        GM_getValue
+// @run-at       document-start
 // @connect      *
-// @run-at       document-end
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // --- 0. 全局开关 (悬浮按钮) ---
-    const STATE_KEY = 'oz_enabled';
-    const isEnabled = GM_getValue(STATE_KEY, true);
-
-    const createToggle = () => {
-        const btn = document.createElement('div');
-        // 使用更优雅的圆角矩形设计，配合磨砂质感
-        Object.assign(btn.style, {
-            position: 'fixed', bottom: '30px', right: '30px', zIndex: '9999999',
-            width: '44px', height: '44px', borderRadius: '14px',
-            background: isEnabled ? 'rgba(0, 120, 212, 0.8)' : 'rgba(128, 128, 128, 0.5)',
-            backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.2)',
-            color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.2)', cursor: 'pointer',
-            transition: 'all 0.3s cubic-bezier(0.2, 0, 0, 1)'
-        });
-        btn.innerHTML = isEnabled ?
-            `<svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>` : // Close icon
-            `<svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M2 12C2 6.48 6.48 2 12 2s10 4.48 10 10-4.48 10-10 10S2 17.52 2 12zm10 6c3.31 0 6-2.69 6-6s-2.69-6-6-6-6 2.69-6 6 2.69 6 6 6z"/></svg>`; // Eye icon
-
-        btn.onclick = () => { GM_setValue(STATE_KEY, !isEnabled); location.reload(); };
-        btn.onmouseenter = () => { btn.style.transform = 'scale(1.1)'; btn.style.boxShadow = '0 12px 40px rgba(0,120,212,0.4)'; };
-        btn.onmouseleave = () => { btn.style.transform = 'scale(1)'; btn.style.boxShadow = '0 8px 32px rgba(0,0,0,0.2)'; };
-        document.body.appendChild(btn);
-    };
-
-    if (!isEnabled) { window.addEventListener('load', createToggle); return; }
-
-    // --- 1. 配置 ---
+    // --- 0. 核心配置 ---
     const C = {
         CONCURRENCY: 6,
-        PRELOAD_Y: "150% 0px",
+        PRELOAD_Y: "0px 0px 1200px 0px",
         ZIP_RX: /\.(zip|cbz)$/i,
-        IMG_RX: /\.(jpg|jpeg|png|webp|gif|bmp)$/i,
-        COVER_RX: /cover|front|folder|index|^0+1\.|^000\.|^001\.|^01\./i,
-        API: '/api/fs/archive/meta'
+        IMG_RX: /\.(jpg|jpeg|png|webp|gif|bmp|avif)$/i,
+        VID_RX: /\.(mp4|webm|ogv|mov)$/i,
+        // 宽泛匹配：包含 cover, title, poster, front, index 等关键词，不区分大小写，忽略前后缀
+        SPECIAL_RX: /(cover|title|poster|front|index|thumb|_cover)/i,
+        API: '/api/fs/archive/meta',
+        PAGE_ROWS: 5 // 每页显示的行数，动态计算总数
     };
 
-    // --- 2. 视觉系统 (Glassmorphism & Windows 11 Fluent) ---
-    GM_addStyle(`
+    // --- 1. 样式系统 (零闪烁 + 玻璃拟态) ---
+    const css = `
         :root {
-            /* 基础参数 */
-            --c-w: 180px;
-            --c-g: 24px;
-            --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-
-            /* 玻璃拟态默认变量 (Light Mode) */
-            --oz-glass-bg: rgba(255, 255, 255, 0.4);
-            --oz-glass-border: 1px solid rgba(255, 255, 255, 0.4);
-            --oz-glass-shd: 0 4px 24px -1px rgba(0, 0, 0, 0.05);
-            --oz-glass-hover: rgba(255, 255, 255, 0.65);
-            --oz-icon-opacity: 0.6;
+            --c-w: 180px; /* 卡片基准宽度 */
+            --c-g: 24px;  /* 网格间距 */
+            --oz-bg: rgba(255, 255, 255, 0.25);
+            --oz-bd: 1px solid rgba(255, 255, 255, 0.3);
+            --oz-shd: 0 8px 32px rgba(0, 0, 0, 0.1);
         }
-
-        /* 自动适配暗色模式 (Dark Mode) - 增强兼容性 */
         @media (prefers-color-scheme: dark) {
             :root {
-                --oz-glass-bg: rgba(0, 0, 0, 0.3);
-                --oz-glass-border: 1px solid rgba(255, 255, 255, 0.08);
-                --oz-glass-shd: 0 8px 32px -4px rgba(0, 0, 0, 0.3);
-                --oz-glass-hover: rgba(60, 60, 60, 0.5);
-                --oz-icon-opacity: 0.8;
+                --oz-bg: rgba(20, 20, 20, 0.5);
+                --oz-bd: 1px solid rgba(255, 255, 255, 0.1);
+                --oz-shd: 0 8px 32px rgba(0, 0, 0, 0.4);
             }
         }
-        /* 强制兼容 OpenList 自身的暗色类名 */
-        body[class*="dark"] {
-            --oz-glass-bg: rgba(0, 0, 0, 0.3);
-            --oz-glass-border: 1px solid rgba(255, 255, 255, 0.08);
-            --oz-glass-shd: 0 8px 32px -4px rgba(0, 0, 0, 0.3);
-            --oz-glass-hover: rgba(60, 60, 60, 0.5);
-            --oz-icon-opacity: 0.8;
-        }
 
-        /* 锁定 & 重置 */
-        html.oz-lock, body.oz-lock { overflow: hidden !important; height: 100vh !important; }
-        .header-row, .hope-stack.title, .list-header { display: none !important; }
+        /* 强制隐藏原始 UI */
+        .list-header, .header-row, .hope-stack.title { display: none !important; }
+        .obj-box, .list, .hope-stack.list { opacity: 0; transition: opacity 0.2s ease; }
+        .oz-ready .obj-box, .oz-ready .list, .oz-ready .hope-stack.list { opacity: 1; }
 
-        /* 布局劫持 - 强制统一 Grid */
+        /* 网格容器 */
         .list, .hope-stack.list, .obj-box>.list {
             display: grid !important;
+            /* 关键：使用 auto-fill 配合 JS 计算的分页，确保每行填满 */
             grid-template-columns: repeat(auto-fill, minmax(var(--c-w), 1fr)) !important;
             gap: var(--c-g) !important;
-            padding: 40px 60px !important;
+            padding: 40px 60px 120px !important;
             width: 100% !important; box-sizing: border-box !important;
-            background: transparent !important; /* 移除背景，透出原生壁纸 */
+            background: transparent !important;
         }
 
-        /* 统一卡片样式 (All Items) */
-        .list-item, a.list-item, div[class*="list-item"] {
+        /* 卡片 */
+        .list-item, a.list-item {
             display: flex !important; flex-direction: column !important;
             aspect-ratio: 2/3; height: auto !important;
-
-            /* Glassmorphism Core */
-            background: var(--oz-glass-bg) !important;
-            backdrop-filter: blur(20px) saturate(120%); -webkit-backdrop-filter: blur(20px) saturate(120%);
-            border: var(--oz-glass-border) !important;
-            border-radius: 12px !important;
-            box-shadow: var(--oz-glass-shd) !important;
-
-            padding: 0 !important; margin: 0 !important;
+            background: var(--oz-bg) !important;
+            backdrop-filter: blur(20px) saturate(140%);
+            border: var(--oz-bd) !important; border-radius: 12px !important;
+            box-shadow: var(--oz-shd) !important;
+            margin: 0 !important; padding: 0 !important;
             overflow: hidden !important; position: relative !important;
-            transition: transform 0.4s var(--ease-spring), background 0.3s ease, box-shadow 0.3s ease !important;
+            transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.3s ease !important;
             cursor: pointer !important; text-decoration: none !important;
-            transform: translateZ(0); /* GPU accel */
+            transform: translateZ(0);
         }
-
+        .list-item[data-hidden="true"] { display: none !important; }
         .list-item:hover {
-            transform: translateY(-6px) scale(1.02) !important;
-            background: var(--oz-glass-hover) !important;
-            box-shadow: 0 16px 48px rgba(0,0,0,0.15) !important;
+            transform: translateY(-8px) scale(1.02) !important;
+            background: rgba(255,255,255,0.4) !important;
+            box-shadow: 0 20px 48px rgba(0,0,0,0.25) !important;
             z-index: 10;
         }
 
-        /* 隐藏原生杂项 */
+        /* 隐藏原始元素 */
         .list-item svg, .list-item .name, .list-item .size, .list-item .date, .list-item .checkbox { display: none !important; }
 
         /* 内容容器 */
-        .oz-content { width: 100%; height: 100%; position: relative; display: flex; align-items: center; justify-content: center; }
-
-        /* 1. ZIP 海报图片 */
-        .oz-img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.5s ease; }
+        .oz-content { width: 100%; height: 100%; position: relative; }
+        .oz-img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.4s ease; }
         .oz-img.loaded { opacity: 1; }
 
-        /* 2. 普通文件图标展示 */
-        .oz-icon-box {
-            font-size: 64px; opacity: var(--oz-icon-opacity);
-            filter: drop-shadow(0 4px 12px rgba(0,0,0,0.1));
-            transition: transform 0.3s ease;
-        }
-        .list-item:hover .oz-icon-box { transform: scale(1.1); filter: drop-shadow(0 8px 16px rgba(0,0,0,0.2)); }
-
-        /* 3. 统一 Loading 动画 (呼吸光晕) */
+        /* 骨架屏优化 */
         .oz-loader {
-            position: absolute; inset: 0;
-            background: linear-gradient(135deg, rgba(255,255,255,0) 40%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0) 60%);
+            position: absolute; inset: -50%;
+            background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.1) 50%, transparent 60%);
             background-size: 200% 200%;
-            animation: oz-breath 3s infinite ease-in-out;
+            animation: oz-shimmer 2s infinite linear;
+            filter: blur(30px); transform: rotate(15deg);
         }
-        @keyframes oz-breath { 0% { opacity: 0.5; background-position: 100% 0; } 50% { opacity: 1; } 100% { opacity: 0.5; background-position: -100% 0; } }
+        @keyframes oz-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-        /* 4. 统一标题遮罩 (无论文件类型，统一美观) */
+        /* Meta 信息 */
         .oz-meta {
             position: absolute; bottom: 0; left: 0; right: 0;
-            padding: 50px 16px 14px;
-            background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.4) 50%, transparent 100%);
-            color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6);
-            display: flex; flex-direction: column; justify-content: flex-end;
+            padding: 60px 16px 14px;
+            background: linear-gradient(to top, rgba(0,0,0,0.9), rgba(0,0,0,0.5) 40%, transparent);
             pointer-events: none;
         }
         .oz-title {
-            font-size: 13px; font-weight: 600; line-height: 1.4;
+            font-size: 13px; color: #fff; font-weight: 600; line-height: 1.4;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.6);
             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
         }
 
-        /* --- 阅读器 (Reader) --- */
+        /* 分页器 */
+        #oz-pager {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 16px; align-items: center;
+            background: rgba(15, 15, 15, 0.85); backdrop-filter: blur(20px);
+            padding: 10px 24px; border-radius: 40px; border: 1px solid rgba(255,255,255,0.15);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.4); z-index: 1000;
+            transition: 0.3s cubic-bezier(0.2, 0, 0, 1);
+        }
+        #oz-pager.h { opacity: 0; transform: translateX(-50%) translateY(30px); pointer-events: none; }
+        .oz-pg-btn {
+            background: rgba(255,255,255,0.1); border: none; color: #fff;
+            width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; transition: 0.2s;
+        }
+        .oz-pg-btn:hover { background: rgba(255,255,255,0.3); transform: scale(1.1); }
+        .oz-pg-btn:disabled { opacity: 0.3; pointer-events: none; }
+        .oz-pg-info { font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #eee; font-weight: 700; min-width: 70px; text-align: center; }
+
+        /* 阅读器 */
+        html.oz-lock, body.oz-lock { overflow: hidden !important; height: 100vh !important; }
         #oz-reader {
-            position: fixed; inset: 0; z-index: 999999;
-            background: #000; display: flex; flex-direction: column;
-            font-family: "Segoe UI", sans-serif;
+            position: fixed; inset: 0; z-index: 999999; background: #080808;
+            display: flex; flex-direction: column;
         }
         .oz-r-view {
             flex: 1; overflow-y: auto; width: 100%; height: 100%;
-            background: #0a0a0a; scroll-behavior: auto; scrollbar-width: none;
+            scroll-behavior: auto; scrollbar-width: none;
         }
         .oz-r-view::-webkit-scrollbar { display: none; }
-
-        /* 极简 HUD */
+        .oz-r-page { display: block; width: 100%; min-height: 200px; position: relative; margin: 0 auto; }
+        .oz-r-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; }
+        .oz-r-img.v { opacity: 1; }
+        .oz-vid-box { width: 100%; padding: 40px 0; background: #000; text-align: center; }
+        .oz-vid { max-width: 90%; max-height: 80vh; border-radius: 8px; box-shadow: 0 0 50px rgba(255,255,255,0.1); }
         .oz-r-hud {
             position: fixed; top: 0; left: 0; right: 0; padding: 16px 24px;
-            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            background: linear-gradient(to bottom, rgba(0,0,0,0.9), transparent);
             display: flex; justify-content: space-between; align-items: center;
-            transition: transform 0.3s ease; pointer-events: none; z-index: 100;
+            transition: transform 0.3s; pointer-events: none; z-index: 100;
         }
         .oz-r-hud.h { transform: translateY(-100%); }
-        .oz-r-btn {
-            pointer-events: auto; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px); color: #fff; padding: 6px 14px; border-radius: 20px;
-            font-size: 12px; cursor: pointer; transition: background 0.2s;
-        }
-        .oz-r-btn:hover { background: rgba(255,255,255,0.3); }
+        .oz-r-btn { pointer-events: auto; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(10px); color: #fff; padding: 6px 14px; border-radius: 20px; cursor: pointer; }
+    `;
 
-        /* 图片页 */
-        .oz-r-page { width: 100%; margin: 0 auto; min-height: 200px; position: relative; display: block; }
-        .oz-r-img { display: block; width: 100%; height: auto; opacity: 0; transition: opacity 0.3s; cursor: zoom-in; }
-        .oz-r-img.v { opacity: 1; }
+    const style = document.createElement('style');
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
 
-        /* 无损缩放层 */
-        #oz-zoom {
-            position: fixed; inset: 0; z-index: 1000000; background: rgba(0,0,0,0.95);
-            display: none; overflow: auto; cursor: zoom-out;
-        }
-        #oz-zoom img { position: absolute; top: 0; left: 0; max-width: none; }
-    `);
-
-    // --- 3. 核心逻辑 ---
+    // --- 2. 逻辑与工具 ---
     const U = {
         token: () => localStorage.getItem('token') || localStorage.getItem('alist_token') || '',
         esc: t => t ? t.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m])) : t,
@@ -225,108 +180,236 @@
             });
         }),
         flat: (n, p = "") => {
-            let r = []; if (!n) return r;
+            let r = [];
+            if (!n) return r;
             n.forEach(x => {
-                let f = p + "/" + x.name;
+                let f = (p ? p + "/" : "") + x.name;
                 if (x.is_dir) r = r.concat(U.flat(x.children, f));
-                else if (C.IMG_RX.test(x.name)) r.push({ n: x.name, p: f });
+                else r.push({ n: x.name, p: f });
             });
             return r;
+        },
+        // 关键：基于全路径的自然排序 (保证 Image Set A 在 Image Set B 之前)
+        pathSort: (a, b) => a.p.localeCompare(b.p, undefined, { numeric: true, sensitivity: 'base' })
+    };
+
+    const Logic = {
+        // 核心逻辑：智能提取与排序
+        analyze: (files) => {
+            const vids = files.filter(x => C.VID_RX.test(x.n));
+            const allImgs = files.filter(x => C.IMG_RX.test(x.n));
+
+            // 1. 分离根目录文件与子目录文件
+            // 根目录文件：路径中不含 "/"
+            const rootImgs = allImgs.filter(x => !x.p.includes('/'));
+            const subImgs = allImgs.filter(x => x.p.includes('/'));
+
+            // 2. 排序
+            // 根目录按文件名排序
+            rootImgs.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true }));
+            // 子目录按全路径排序 (保证 A/a1 在 B/b1 之前)
+            subImgs.sort(U.pathSort);
+
+            // 3. 构建阅读顺序：根目录优先 -> 然后是子文件夹
+            let readList = [...rootImgs, ...subImgs];
+
+            // 4. 海报选择策略
+            let poster = null;
+
+            // 策略 A: 检查根目录是否有 Special 关键词
+            poster = rootImgs.find(x => C.SPECIAL_RX.test(x.n));
+
+            // 策略 B: 检查子目录是否有 Special 关键词 (按路径序)
+            if (!poster) poster = subImgs.find(x => C.SPECIAL_RX.test(x.n));
+
+            // 策略 C: 根目录第一张
+            if (!poster) poster = rootImgs[0];
+
+            // 策略 D: 子目录第一张
+            if (!poster) poster = subImgs[0];
+
+            // 5. 调整阅读列表 (如果海报在列表中，将其置顶? 需求未明确要求置顶，但通常置顶更好，这里严格按照 Requirements 2 的顺序描述，不需要置顶，只需正确顺序)
+            // 用户要求：Cover -> A -> B. 我们的 readList 已经是 Root -> Sub(A->B). 符合要求。
+
+            return { poster, readList, vids };
         }
     };
 
+    // --- 3. 主程序 ---
     class App {
         constructor() {
             this.q = 0;
-            this.io = new IntersectionObserver(es => es.forEach(e => {
-                if (e.isIntersecting) { this.io.unobserve(e.target); this.loadCover(e.target); }
-            }), { rootMargin: '300px' });
+            this.items = [];
+            this.pgSize = 20;
+            this.curPg = 0;
+            this.lastW = 0;
 
-            new MutationObserver(() => this.hydrate()).observe(document.body, { childList: true, subtree: true });
-            createToggle();
-            this.hydrate();
+            // 预加载监听
+            this.io = new IntersectionObserver(es => es.forEach(e => {
+                if (e.isIntersecting) { this.io.unobserve(e.target); this.loadMeta(e.target); }
+            }), { rootMargin: '600px' }); // 预加载范围加大
+
+            this.createPager();
+
+            // Resize 监听 (防抖)
+            let rsT;
+            window.addEventListener('resize', () => {
+                clearTimeout(rsT);
+                rsT = setTimeout(() => this.calcPage(), 100);
+            });
+
+            // 初始化
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => this.boot());
+            else this.boot();
         }
 
-        hydrate() {
-            const items = document.querySelectorAll('.list-item:not([data-oz])');
-            if (!items.length) return;
+        createPager() {
+            this.pager = document.createElement('div');
+            this.pager.id = 'oz-pager';
+            this.pager.innerHTML = `
+                <button class="oz-pg-btn" id="oz-prev"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></button>
+                <div class="oz-pg-info"></div>
+                <button class="oz-pg-btn" id="oz-next"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg></button>
+            `;
+            document.body.appendChild(this.pager);
+            this.pgInfo = this.pager.querySelector('.oz-pg-info');
+            this.btnPrev = this.pager.querySelector('#oz-prev');
+            this.btnNext = this.pager.querySelector('#oz-next');
 
-            items.forEach(el => {
+            this.btnPrev.onclick = () => this.goPage(this.curPg - 1);
+            this.btnNext.onclick = () => this.goPage(this.curPg + 1);
+
+            let t;
+            const wake = () => { this.pager.classList.remove('h'); clearTimeout(t); t = setTimeout(() => this.pager.classList.add('h'), 3000); };
+            window.addEventListener('scroll', wake);
+            window.addEventListener('mousemove', (e) => { if(e.clientY > window.innerHeight - 100) wake(); });
+        }
+
+        boot() {
+            this.mo = new MutationObserver(() => this.scan());
+            this.mo.observe(document.body, { childList: true, subtree: true });
+            this.scan();
+        }
+
+        scan() {
+            const raw = document.querySelectorAll('.list-item:not([data-oz])');
+            if (!raw.length) return;
+
+            raw.forEach(el => {
                 el.dataset.oz = "1";
-                // 提取信息
                 const nEl = el.querySelector('.name') || el.querySelector('.text-truncate');
                 const rawName = nEl ? nEl.textContent.trim() : "File";
-                const isZip = C.ZIP_RX.test(rawName);
 
-                // 提取原生图标 (SVG) 用于非ZIP文件展示
-                const svgIcon = el.querySelector('svg')?.outerHTML || '📄';
+                // 类型判定
+                const isZip = C.ZIP_RX.test(rawName);
+                const isImg = C.IMG_RX.test(rawName);
 
                 let href = decodeURIComponent(el.getAttribute('href') || el.dataset.path || "");
                 if (!href && el.querySelector('a')) href = decodeURIComponent(el.querySelector('a').getAttribute('href'));
 
-                // --- 统一构建 HTML ---
-                // 无论是什么文件，都放在 .oz-content 中，样式完全统一
-                let innerHTML = '';
+                const icon = el.querySelector('svg')?.outerHTML || '📄';
+                let content = '';
 
                 if (isZip) {
-                    // ZIP 模式：图片加载器 + 图片
-                    innerHTML = `
-                        <div class="oz-loader"></div>
-                        <img class="oz-img" loading="lazy" data-path="${href}" alt="cover">
-                    `;
+                    content = `<div class="oz-loader"></div><img class="oz-img" loading="lazy" data-path="${href}">`;
+                    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); new Reader(rawName, href); }, true);
+                } else if (isImg) {
+                    content = `<div class="oz-loader"></div><img class="oz-img" loading="lazy" src="${href}" onload="this.classList.add('loaded');this.previousElementSibling.remove()">`;
+                    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); new Reader(rawName, href, true); }, true);
                 } else {
-                    // 普通文件模式：大图标
-                    innerHTML = `
-                        <div class="oz-icon-box">${svgIcon}</div>
-                    `;
+                    content = `<div style="font-size:48px;opacity:0.6;filter:grayscale(1)">${icon}</div>`;
                 }
 
-                // 注入 DOM
                 el.innerHTML = `
-                    <div class="oz-content">
-                        ${innerHTML}
-                        <div class="oz-meta">
-                            <div class="oz-title">${U.esc(rawName)}</div>
-                        </div>
-                    </div>
+                    <div class="oz-content">${content}</div>
+                    <div class="oz-meta"><div class="oz-title">${U.esc(rawName)}</div></div>
                 `;
 
-                // --- 交互绑定 ---
-                if (isZip) {
-                    // ZIP: 拦截点击 -> 阅读器
-                    const openReader = (e) => { e.preventDefault(); e.stopPropagation(); new Reader(rawName, href); };
-                    el.addEventListener('click', openReader, true);
-                    // 开始懒加载封面
-                    this.io.observe(el.querySelector('.oz-img'));
-                } else {
-                    // 普通文件: 允许冒泡，触发 OpenList 原生跳转行为，但样式上保持统一
-                    // 如果需要，可以在这里针对特定文件类型做处理，目前保持统一展示
-                }
+                this.items.push(el);
+                if (isZip) this.io.observe(el.querySelector('.oz-img'));
             });
+
+            document.body.classList.add('oz-ready');
+            this.calcPage();
         }
 
-        async loadCover(img) {
-            if (this.q >= C.CONCURRENCY) return setTimeout(() => this.loadCover(img), 200);
-            this.q++;
-            const path = img.dataset.path;
-            try {
-                const data = await U.req(C.API, { path: path, password: "" });
-                const files = U.flat(data.content);
-                const cover = files.find(x => C.COVER_RX.test(x.n)) || files[0];
+        // --- 核心优化：完美分页算法 ---
+        calcPage() {
+            const listEl = document.querySelector('.list');
+            if (!listEl || !this.items.length) return;
 
-                if (cover) {
-                    img.src = `${data.raw_url}?sign=${data.sign}&inner=${encodeURIComponent(cover.p)}`;
-                    img.onload = () => {
-                        img.classList.add('loaded');
-                        img.previousElementSibling?.remove(); // 移除 Loader
-                    };
-                } else {
-                    // 压缩包内无图片 -> 转为图标显示
-                    img.parentElement.innerHTML = `<div class="oz-icon-box">📦</div>`;
-                }
+            // 获取容器实际可用宽度 (排除 padding)
+            const style = window.getComputedStyle(listEl);
+            const w = listEl.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+
+            if (w === this.lastW && this.pgSize > 0) return; // 宽度未变则不重算
+            this.lastW = w;
+
+            // CSS 变量值 (与 CSS 中的 var(--c-w) 和 var(--c-g) 保持一致)
+            const itemW = 180;
+            const gap = 24;
+
+            // 计算每行能放多少个 (Math.floor((TotalWidth + gap) / (ItemWidth + gap)))
+            // 原理: n * w + (n-1) * g <= W  =>  n * (w+g) - g <= W  => n <= (W+g)/(w+g)
+            const cols = Math.floor((w + gap) / (itemW + gap));
+
+            // 确保至少有1列
+            const safeCols = Math.max(1, cols);
+
+            // 每页数量必须是列数的整数倍，确保铺满
+            const newPgSize = safeCols * C.PAGE_ROWS;
+
+            if (newPgSize !== this.pgSize) {
+                this.pgSize = newPgSize;
+                this.curPg = 0; // 重置页码防止越界
+                this.render();
+            } else {
+                this.render();
+            }
+        }
+
+        goPage(p) {
+            const max = Math.ceil(this.items.length / this.pgSize) - 1;
+            this.curPg = Math.max(0, Math.min(p, max));
+            this.render();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        render() {
+            const total = this.items.length;
+            const max = Math.ceil(total / this.pgSize);
+            const start = this.curPg * this.pgSize;
+            const end = start + this.pgSize;
+
+            this.items.forEach((el, i) => {
+                if (i >= start && i < end) el.removeAttribute('data-hidden');
+                else el.setAttribute('data-hidden', 'true');
+            });
+
+            if (max <= 1) {
+                this.pager.style.display = 'none';
+            } else {
+                this.pager.style.display = 'flex';
+                this.pgInfo.textContent = `${this.curPg + 1} / ${max}`;
+                this.btnPrev.disabled = this.curPg === 0;
+                this.btnNext.disabled = this.curPg === max - 1;
+            }
+        }
+
+        async loadMeta(img) {
+            if (this.q >= C.CONCURRENCY) return setTimeout(() => this.loadMeta(img), 200);
+            this.q++;
+            try {
+                const data = await U.req(C.API, { path: img.dataset.path, password: "" });
+                const files = U.flat(data.content);
+                const { poster } = Logic.analyze(files);
+
+                if (poster) {
+                    img.src = `${data.raw_url}?sign=${data.sign}&inner=${encodeURIComponent(poster.p)}`;
+                    img.onload = () => { img.classList.add('loaded'); img.previousElementSibling?.remove(); };
+                } else { throw 0; }
             } catch {
-                // 加载失败 -> 图标显示
-                img.parentElement.innerHTML = `<div class="oz-icon-box">🚫</div>`;
+                img.parentElement.innerHTML = `<div style="font-size:40px">📦</div>`;
             } finally {
                 this.q--;
             }
@@ -334,83 +417,101 @@
     }
 
     class Reader {
-        constructor(t, p) {
-            this.t = t; this.p = p; this.pgs = [];
+        constructor(t, p, s = false) {
+            this.t = t; this.p = p; this.s = s;
             document.documentElement.classList.add('oz-lock'); document.body.classList.add('oz-lock');
-            this.ui(); this.ld();
+            this.ui();
+            this.s ? this.loadS() : this.loadZ();
         }
+
         ui() {
             this.el = document.createElement('div'); this.el.id = 'oz-reader';
             this.el.innerHTML = `
                 <div class="oz-r-hud" id="oz-hud">
                     <button class="oz-r-btn" id="oz-back">← Back</button>
-                    <span style="color:#fff;font-size:12px;opacity:0.7;font-family:monospace" id="oz-cnt"></span>
+                    <span style="color:#fff;font-size:12px;font-family:monospace;opacity:0.8" id="oz-cnt">Loading...</span>
                 </div>
                 <div class="oz-r-view" id="oz-view" tabindex="0"></div>
-                <div id="oz-zoom"><img id="oz-z-img"></div>
             `;
             document.body.appendChild(this.el);
             this.v = this.el.querySelector('#oz-view');
+            this.cnt = this.el.querySelector('#oz-cnt');
             this.hud = this.el.querySelector('#oz-hud');
-            this.zm = this.el.querySelector('#oz-zoom');
-            this.zi = this.el.querySelector('#oz-z-img');
-
             this.el.querySelector('#oz-back').onclick = () => this.die();
-            this.zm.onclick = () => { this.zm.style.display = 'none'; this.zi.src = ''; };
 
-            // 自动隐藏 HUD
             let tm; const rst = () => { this.hud.classList.remove('h'); clearTimeout(tm); tm = setTimeout(() => this.hud.classList.add('h'), 2500); };
             this.el.onmousemove = e => { if (e.clientY < 100) rst(); };
-            this.v.onscroll = () => { if (!this.hud.classList.contains('h')) this.hud.classList.add('h'); this.prog(); };
+            this.v.onscroll = () => { if (!this.hud.classList.contains('h')) this.hud.classList.add('h'); this.upd(); };
 
-            // 键盘
             window.addEventListener('keydown', this.kh = e => {
-                if (e.key === 'Escape') this.zm.style.display === 'block' ? this.zm.click() : this.die();
-                else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') this.v.scrollBy({top: 300, behavior: 'smooth'});
-                else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') this.v.scrollBy({top: -300, behavior: 'smooth'});
+                if (e.key === 'Escape') this.die();
+                const s = window.innerHeight * 0.8;
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); this.v.scrollBy({top: s, behavior:'smooth'}); }
+                if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); this.v.scrollBy({top: -s, behavior:'smooth'}); }
             });
             this.v.focus();
         }
-        async ld() {
-            try {
-                const d = await U.req(C.API, { path: this.p, password: "" });
-                this.base = d;
-                this.pgs = U.flat(d.content).sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: 1 }));
-                if (!this.pgs.length) throw 0;
-                this.el.querySelector('#oz-cnt').innerText = `1 / ${this.pgs.length}`;
 
-                const io = new IntersectionObserver(es => es.forEach(e => e.isIntersecting ? this.l_img(e.target) : this.u_img(e.target)), { root: this.v, rootMargin: C.PRELOAD_Y });
-                this.pgs.forEach((f, i) => {
-                    const d = document.createElement('div'); d.className = 'oz-r-page'; d.style.height = '600px';
+        loadS() {
+            const d = document.createElement('div'); d.className = 'oz-r-page';
+            d.innerHTML = `<img class="oz-r-img v" src="${this.p}">`;
+            this.v.appendChild(d); this.cnt.innerText = "1 / 1";
+        }
+
+        async loadZ() {
+            try {
+                const data = await U.req(C.API, { path: this.p, password: "" });
+                this.base = data;
+                const files = U.flat(data.content);
+                const { readList, vids } = Logic.analyze(files);
+
+                if (!readList.length && !vids.length) throw "Empty";
+                this.imgs = readList;
+                this.cnt.innerText = `1 / ${readList.length}`;
+
+                const io = new IntersectionObserver(es => es.forEach(e => {
+                    e.isIntersecting ? this.mount(e.target) : this.unmount(e.target);
+                }), { root: this.v, rootMargin: C.PRELOAD_Y });
+
+                readList.forEach((f, i) => {
+                    const d = document.createElement('div'); d.className = 'oz-r-page'; d.style.height = '800px';
                     d.f = f; d.idx = i; this.v.appendChild(d); io.observe(d);
                 });
-            } catch { alert('Load Error'); this.die(); }
-        }
-        l_img(div) {
-            if (div.ok) return;
-            const i = new Image();
-            i.className = 'oz-r-img'; i.loading = 'lazy';
-            i.onload = () => { div.ok = 1; div.style.height = 'auto'; div.style.aspectRatio = i.naturalWidth/i.naturalHeight; i.classList.add('v'); };
-            i.onclick = e => {
-                if (i.naturalWidth > window.innerWidth) {
-                    this.zi.src = i.src; this.zm.style.display = 'block';
-                    const rect = i.getBoundingClientRect();
-                    const rx = (e.clientX - rect.left) / rect.width, ry = (e.clientY - rect.top) / rect.height;
-                    const tx = (i.naturalWidth * rx) - window.innerWidth/2, ty = (i.naturalHeight * ry) - window.innerHeight/2;
-                    if(this.zi.complete) this.zm.scrollTo(tx, ty); else this.zi.onload = () => this.zm.scrollTo(tx, ty);
+
+                if (vids.length) {
+                    vids.forEach(v => {
+                        const box = document.createElement('div'); box.className = 'oz-vid-box';
+                        const u = `${this.base.raw_url}?sign=${this.base.sign}&inner=${encodeURIComponent(v.p)}`;
+                        box.innerHTML = `<video class="oz-vid" controls playsinline><source src="${u}"></video><div style="color:#666;font-size:12px;margin-top:10px">${U.esc(v.n)}</div>`;
+                        this.v.appendChild(box);
+                    });
                 }
-            };
+            } catch(e) { console.error(e); alert('Error'); this.die(); }
+        }
+
+        mount(div) {
+            if (div.ok) return;
+            const i = new Image(); i.className = 'oz-r-img'; i.decoding = 'async';
+            i.onload = () => { div.ok = 1; div.style.height = 'auto'; i.classList.add('v'); };
             i.src = `${this.base.raw_url}?sign=${this.base.sign}&inner=${encodeURIComponent(div.f.p)}`;
             div.innerHTML = ''; div.appendChild(i);
         }
-        u_img(div) {
+
+        unmount(div) {
             if (!div.ok) return;
             div.style.height = div.offsetHeight + 'px'; div.innerHTML = ''; div.ok = 0;
         }
-        prog() {
-            const m = this.v.scrollTop + window.innerHeight/2;
-            for(let c of this.v.children) { if (c.offsetTop + c.offsetHeight > m) { this.el.querySelector('#oz-cnt').innerText = `${c.idx+1} / ${this.pgs.length}`; break; } }
+
+        upd() {
+            if (!this.imgs) return;
+            const m = this.v.scrollTop + window.innerHeight / 2;
+            for(let c of this.v.children) {
+                if (c.classList.contains('oz-r-page') && c.offsetTop + c.offsetHeight > m) {
+                    this.cnt.innerText = `${c.idx+1} / ${this.imgs.length}`; break;
+                }
+            }
         }
+
         die() {
             document.documentElement.classList.remove('oz-lock'); document.body.classList.remove('oz-lock');
             window.removeEventListener('keydown', this.kh); this.el.remove();
